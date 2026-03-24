@@ -98,7 +98,6 @@ class ServerManager: ObservableObject {
     private enum CustomProviderConstants {
         static let userConfigFilename = "config.yaml"
         static let mergedConfigFilename = "merged-config.yaml"
-        static let managedZAIProviderName = "zai"
     }
 
     private struct LoadedBaseConfig {
@@ -111,17 +110,6 @@ class ServerManager: ObservableObject {
     }
     
     var onLogUpdate: (([String]) -> Void)?
-
-    /// OAuth provider keys used in config.yaml oauth-excluded-models
-    static let oauthProviderKeys: [String: String] = [
-        "claude": "claude",
-        "codex": "codex",
-        "gemini": "gemini-cli",
-        "github-copilot": "github-copilot",
-        "antigravity": "antigravity",
-        "qwen": "qwen"
-    ]
-    static let reservedCustomProviderKeys = Set(oauthProviderKeys.keys).union([CustomProviderConstants.managedZAIProviderName])
 
     init() {
         logBuffer = RingBuffer(capacity: maxLogLines)
@@ -143,7 +131,7 @@ class ServerManager: ObservableObject {
     }
 
     func providerConfigLockReason(_ providerKey: String) -> String? {
-        guard let oauthProviderKey = Self.oauthProviderKeys[providerKey] else {
+        guard let oauthProviderKey = ProviderCatalog.oauthProviderKeys[providerKey] else {
             return nil
         }
         guard case .success(let baseConfig) = loadBaseConfigRoot() else {
@@ -601,7 +589,7 @@ class ServerManager: ObservableObject {
             clearConfigError()
             let providers = ConfigComposer.parseCustomProviders(
                 from: config.root,
-                reservedProviderIDs: Self.reservedCustomProviderKeys
+                reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
             )
             let managedProviderIDs = Set(providers.map { $0.id })
             let credentialRecords = loadCustomProviderCredentialRecords()
@@ -664,9 +652,9 @@ class ServerManager: ObservableObject {
         let customAuthRecords = loadCustomProviderCredentialRecords()
         let managedCustomProviders = ConfigComposer.parseCustomProviders(
             from: baseConfig.root,
-            reservedProviderIDs: Self.reservedCustomProviderKeys
+            reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
         )
-        let disabledProviders = Self.oauthProviderKeys.compactMap { serviceKey, oauthKey in
+        let disabledProviders = ProviderCatalog.oauthProviderKeys.compactMap { serviceKey, oauthKey in
             isProviderEnabled(serviceKey) ? nil : oauthKey
         }
         let disabledCustomProviderIDs = Set(managedCustomProviders.map { $0.id }).filter { !isProviderEnabled($0) }
@@ -683,7 +671,7 @@ class ServerManager: ObservableObject {
         
         let mergedRoot = ConfigComposer.composeRuntimeConfig(
             baseRoot: baseConfig.root,
-            reservedCustomProviderKeys: Self.reservedCustomProviderKeys,
+            reservedCustomProviderKeys: ProviderCatalog.reservedCustomProviderKeys,
             disabledCustomProviderIDs: disabledCustomProviderIDs,
             disabledOAuthProviderKeys: disabledProviders,
             zaiAPIKeys: zaiApiKeys,
@@ -694,8 +682,8 @@ class ServerManager: ObservableObject {
                     isDisabled: $0.isDisabled
                 )
             },
-            includeManagedZAIProvider: isProviderEnabled(CustomProviderConstants.managedZAIProviderName),
-            managedZAIProviderName: CustomProviderConstants.managedZAIProviderName
+            includeManagedZAIProvider: isProviderEnabled(ProviderCatalog.managedZAIProviderName),
+            managedZAIProviderName: ProviderCatalog.managedZAIProviderName
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)
@@ -828,7 +816,7 @@ class ServerManager: ObservableObject {
     ) -> Result<LoadedBaseConfig, ConfigResolutionFailure> {
         let validationErrors = ConfigComposer.validateCustomProviders(
             in: root,
-            reservedProviderIDs: Self.reservedCustomProviderKeys
+            reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
         )
         guard validationErrors.isEmpty else {
             return .failure(

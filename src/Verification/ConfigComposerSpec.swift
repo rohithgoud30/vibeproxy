@@ -1,14 +1,6 @@
 import Foundation
 
-private let reservedProviderIDs: Set<String> = [
-    "antigravity",
-    "claude",
-    "codex",
-    "gemini",
-    "github-copilot",
-    "qwen",
-    "zai"
-]
+private let reservedProviderIDs = ProviderCatalog.reservedCustomProviderKeys
 
 @main
 struct ConfigComposerSpec {
@@ -89,6 +81,63 @@ struct ConfigComposerSpec {
             expectEqual(nvidia?["display-name"] as? String, "NVIDIA", "user display-name should overlay", recorder: recorder)
             expectEqual(nvidia?["help-text"] as? String, "Bundled help", "bundled help-text should remain", recorder: recorder)
             expectEqual(providerEntries(in: merged).count, 1, "provider entries should merge by name", recorder: recorder)
+        }
+
+        run("composeAdditiveBaseConfig preserves bundled provider order and appends new overlays", recorder: recorder) {
+            let bundledRoot: [String: Any] = [
+                "openai-compatibility": [
+                    ["name": "alpha", "base-url": "https://alpha.example.com/v1"],
+                    ["name": "beta", "base-url": "https://beta.example.com/v1"]
+                ]
+            ]
+            let userRoot: [String: Any] = [
+                "openai-compatibility": [
+                    ["name": "beta", "display-name": "Beta Override"],
+                    ["name": "gamma", "base-url": "https://gamma.example.com/v1"]
+                ]
+            ]
+
+            let merged = ConfigComposer.composeAdditiveBaseConfig(
+                bundledRoot: bundledRoot,
+                userRoot: userRoot
+            )
+            let names = providerEntries(in: merged).compactMap { $0["name"] as? String }
+
+            expectEqual(
+                names,
+                ["alpha", "beta", "gamma"],
+                "bundled provider order should remain stable and new overlay providers should append at the end",
+                recorder: recorder
+            )
+            expectEqual(
+                provider(named: "beta", in: merged)?["display-name"] as? String,
+                "Beta Override",
+                "overlay updates should apply in place without reordering bundled providers",
+                recorder: recorder
+            )
+        }
+
+        run("composeAdditiveBaseConfig ignores empty openai-compatibility overlays", recorder: recorder) {
+            let bundledRoot: [String: Any] = [
+                "openai-compatibility": [
+                    ["name": "existing", "base-url": "https://existing.example.com/v1"]
+                ]
+            ]
+            let userRoot: [String: Any] = [
+                "openai-compatibility": []
+            ]
+
+            let merged = ConfigComposer.composeAdditiveBaseConfig(
+                bundledRoot: bundledRoot,
+                userRoot: userRoot
+            )
+
+            expectEqual(
+                providerEntries(in: merged).compactMap { $0["name"] as? String },
+                ["existing"],
+                "an empty openai-compatibility overlay should be treated as no additive override",
+                recorder: recorder
+            )
         }
 
         run("parseCustomProviders ignores reserved providers and keeps UI metadata", recorder: recorder) {

@@ -186,12 +186,20 @@ enum ConfigComposer {
         
         for (key, overlayValue) in overlay {
             if key == "openai-compatibility" {
-                let overlayEntries = stringKeyedDictionaryArray(overlayValue)
-                if overlayEntries.isEmpty {
-                    merged[key] = overlayValue
+                if let overlayArray = overlayValue as? [Any] {
+                    guard !overlayArray.isEmpty else {
+                        continue
+                    }
+
+                    let overlayEntries = overlayArray.compactMap { stringKeyedDictionary($0) }
+                    if overlayEntries.isEmpty {
+                        merged[key] = overlayValue
+                    } else {
+                        let baseEntries = stringKeyedDictionaryArray(merged[key])
+                        merged[key] = mergeNamedEntries(base: baseEntries, overlay: overlayEntries)
+                    }
                 } else {
-                    let baseEntries = stringKeyedDictionaryArray(merged[key])
-                    merged[key] = mergeNamedEntries(base: baseEntries, overlay: overlayEntries)
+                    merged[key] = overlayValue
                 }
                 continue
             }
