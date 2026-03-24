@@ -166,7 +166,7 @@ class ServerManager: ObservableObject {
             addLog(enabled ? "✓ Enabled provider: \(providerKey)" : "⚠️ Disabled provider: \(providerKey)")
         }
         reloadCustomProviders()
-        applyConfigUpdate()
+        requestConfigUpdate()
     }
     
     deinit {
@@ -550,7 +550,7 @@ class ServerManager: ObservableObject {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: filePath.path)
             addLog("✓ Z.AI API key saved to \(filename)")
             reloadCustomProviders()
-            applyConfigUpdate()
+            requestConfigUpdate()
             completion(true, "API key saved successfully")
         } catch {
             completion(false, "Failed to save API key: \(error.localizedDescription)")
@@ -562,7 +562,7 @@ class ServerManager: ObservableObject {
             _ = try customProviderCredentialStore.save(providerID: providerID, apiKey: apiKey)
             addLog("✓ Saved API key for custom provider: \(providerID)")
             reloadCustomProviders()
-            applyConfigUpdate()
+            requestConfigUpdate()
             completion(true, "API key saved successfully")
         } catch {
             completion(false, "Failed to save API key: \(error.localizedDescription)")
@@ -575,7 +575,7 @@ class ServerManager: ObservableObject {
             try customProviderCredentialStore.delete(filePath: credential.filePath)
             addLog("✓ Removed custom provider key: \(credential.label)")
             reloadCustomProviders()
-            applyConfigUpdate()
+            requestConfigUpdate()
             return true
         } catch {
             NSLog("[ServerManager] Failed to delete custom provider credential: %@", error.localizedDescription)
@@ -588,7 +588,7 @@ class ServerManager: ObservableObject {
         do {
             _ = try customProviderCredentialStore.toggleDisabled(filePath: credential.filePath)
             reloadCustomProviders()
-            applyConfigUpdate()
+            requestConfigUpdate()
             return true
         } catch {
             NSLog("[ServerManager] Failed to toggle custom provider credential: %@", error.localizedDescription)
@@ -889,8 +889,21 @@ class ServerManager: ObservableObject {
             DispatchQueue.main.async(execute: update)
         }
     }
+
+    private func requestConfigUpdate() {
+        let update: () -> Void = { [weak self] in
+            self?.applyConfigUpdate()
+        }
+        if Thread.isMainThread {
+            update()
+        } else {
+            DispatchQueue.main.async(execute: update)
+        }
+    }
     
     private func applyConfigUpdate() {
+        assert(Thread.isMainThread, "applyConfigUpdate must run on the main thread")
+
         guard !isRestartingForConfigUpdate else {
             hasPendingConfigUpdate = true
             return
@@ -925,7 +938,7 @@ class ServerManager: ObservableObject {
             return
         }
         hasPendingConfigUpdate = false
-        applyConfigUpdate()
+        requestConfigUpdate()
     }
 }
 
