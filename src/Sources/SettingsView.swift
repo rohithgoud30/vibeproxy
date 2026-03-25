@@ -509,19 +509,16 @@ struct SettingsView: View {
     @State private var showingAuthResult = false
     @State private var authResultMessage = ""
     @State private var authResultSuccess = false
-    @State private var fileMonitor: DispatchSourceFileSystemObject?
     @State private var showingQwenEmailPrompt = false
     @State private var qwenEmail = ""
     @State private var showingZaiApiKeyPrompt = false
     @State private var zaiApiKey = ""
     @State private var selectedCustomProvider: CustomProviderDefinition?
     @State private var customProviderApiKey = ""
-    @State private var pendingRefresh: DispatchWorkItem?
     @State private var expandedRowCount = 0
     
     private enum Timing {
         static let serverRestartDelay: TimeInterval = 0.3
-        static let refreshDebounce: TimeInterval = 0.5
     }
 
     private var appVersion: String {
@@ -876,10 +873,9 @@ struct SettingsView: View {
             authManager.checkAuthStatus()
             serverManager.reloadCustomProviders()
             checkLaunchAtLogin()
-            startMonitoringAuthDirectory()
         }
-        .onDisappear {
-            stopMonitoringAuthDirectory()
+        .onReceive(NotificationCenter.default.publisher(for: .authDirectoryChanged)) { _ in
+            authManager.checkAuthStatus()
         }
         .alert("Authentication Result", isPresented: $showingAuthResult) {
             Button("OK", role: .cancel) { }
@@ -1050,7 +1046,18 @@ struct SettingsView: View {
                 
                 if success {
                     self.authResultSuccess = true
-                    self.authResultMessage = "✓ \(provider.title) API key added successfully.\n\nYou can now use this provider through the proxy."
+                    switch output {
+                    case "API key saved successfully":
+                        self.authResultMessage = "✓ \(provider.title) API key added successfully.\n\nYou can now use this provider through the proxy."
+                    case "API key already exists in config":
+                        self.authResultMessage = "✓ \(provider.title) already has this API key in ~/.cli-proxy-api/config.yaml."
+                    case "API key already exists":
+                        self.authResultMessage = "✓ \(provider.title) already has this API key stored."
+                    case "API key was already stored and has been re-enabled":
+                        self.authResultMessage = "✓ \(provider.title) already had this API key stored, and it has been re-enabled."
+                    default:
+                        self.authResultMessage = output
+                    }
                     self.showingAuthResult = true
                 } else {
                     self.authResultSuccess = false
@@ -1111,46 +1118,5 @@ struct SettingsView: View {
         } else {
             cleanup()
         }
-    }
-    
-    // MARK: - File Monitoring
-    
-    private func startMonitoringAuthDirectory() {
-        let authDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cli-proxy-api")
-        try? FileManager.default.createDirectory(at: authDir, withIntermediateDirectories: true)
-        
-        let fileDescriptor = open(authDir.path, O_EVTONLY)
-        guard fileDescriptor >= 0 else { return }
-        
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fileDescriptor,
-            eventMask: [.write, .delete, .rename],
-            queue: DispatchQueue.main
-        )
-        
-        source.setEventHandler { [self] in
-            // Debounce rapid file changes to prevent UI flashing
-            pendingRefresh?.cancel()
-            let workItem = DispatchWorkItem {
-                NSLog("[FileMonitor] Auth directory changed - refreshing status")
-                authManager.checkAuthStatus()
-                serverManager.handleObservedConfigInputsChanged()
-            }
-            pendingRefresh = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + Timing.refreshDebounce, execute: workItem)
-        }
-        
-        source.setCancelHandler {
-            close(fileDescriptor)
-        }
-        
-        source.resume()
-        fileMonitor = source
-    }
-    
-    private func stopMonitoringAuthDirectory() {
-        pendingRefresh?.cancel()
-        fileMonitor?.cancel()
-        fileMonitor = nil
     }
 }

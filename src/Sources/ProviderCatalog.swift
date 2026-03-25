@@ -13,5 +13,7 @@ enum ProviderCatalog {
         "qwen": "qwen"
     ]
 
-    static let reservedCustomProviderKeys = Set(oauthProviderKeys.keys).union([managedZAIProviderName])
+    static let reservedCustomProviderKeys = Set(oauthProviderKeys.keys)
+        .union(oauthProviderKeys.values)
+        .union([managedZAIProviderName])
 }

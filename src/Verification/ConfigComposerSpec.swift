@@ -155,6 +155,7 @@ struct ConfigComposerSpec {
                         "icon-system": "bolt.fill",
                         "base-url": "https://integrate.api.nvidia.com/v1",
                         "api-key-entries": [
+                            ["api-key": "inline-a"],
                             ["api-key": "inline-a"]
                         ],
                         "models": [
@@ -175,7 +176,7 @@ struct ConfigComposerSpec {
             expectEqual(providers.first?.helpText, "OpenAI-compatible NVIDIA endpoint", "help text should be preserved for UI", recorder: recorder)
             expectEqual(providers.first?.iconSystemName, "bolt.fill", "icon metadata should be preserved for UI", recorder: recorder)
             expectEqual(providers.first?.modelAliases, ["glm5"], "model aliases should be extracted", recorder: recorder)
-            expectEqual(providers.first?.inlineKeyCount, 1, "inline key count should be derived from config", recorder: recorder)
+            expectEqual(providers.first?.inlineKeyCount, 1, "inline key count should deduplicate repeated config keys", recorder: recorder)
         }
 
         run("composeRuntimeConfig preserves user oauth exclusions", recorder: recorder) {
@@ -368,6 +369,69 @@ struct ConfigComposerSpec {
                 validationErrors,
                 ["Custom provider 'nvidia' must define a non-empty base-url."],
                 "only non-reserved custom providers with blank base-url should fail validation",
+                recorder: recorder
+            )
+        }
+
+        run("validateCustomProviders rejects malformed openai-compatibility shapes", recorder: recorder) {
+            let malformedRoot: [String: Any] = [
+                "openai-compatibility": [
+                    "not-a-provider-mapping"
+                ]
+            ]
+            let scalarRoot: [String: Any] = [
+                "openai-compatibility": "not-an-array"
+            ]
+
+            let malformedErrors = ConfigComposer.validateCustomProviders(
+                in: malformedRoot,
+                reservedProviderIDs: reservedProviderIDs
+            )
+            let scalarErrors = ConfigComposer.validateCustomProviders(
+                in: scalarRoot,
+                reservedProviderIDs: reservedProviderIDs
+            )
+
+            expectEqual(
+                malformedErrors,
+                ["openai-compatibility[0] must be a mapping."],
+                "non-mapping provider entries should fail loudly",
+                recorder: recorder
+            )
+            expectEqual(
+                scalarErrors,
+                ["openai-compatibility must be an array of provider mappings."],
+                "non-array openai-compatibility roots should fail loudly",
+                recorder: recorder
+            )
+        }
+
+        run("validateCustomProviders rejects non-canonical and reserved provider ids", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": " zai ",
+                        "base-url": "https://api.z.ai/api/coding/paas/v4"
+                    ],
+                    [
+                        "name": "gemini-cli",
+                        "base-url": "https://example.com/v1"
+                    ]
+                ]
+            ]
+
+            let validationErrors = ConfigComposer.validateCustomProviders(
+                in: root,
+                reservedProviderIDs: reservedProviderIDs
+            )
+
+            expectEqual(
+                validationErrors,
+                [
+                    "Provider name ' zai ' must not include leading or trailing whitespace.",
+                    "Provider 'gemini-cli' is reserved and cannot be declared under openai-compatibility."
+                ],
+                "whitespace-padded and reserved provider ids should be rejected",
                 recorder: recorder
             )
         }

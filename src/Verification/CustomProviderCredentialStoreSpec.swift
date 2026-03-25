@@ -8,7 +8,7 @@ struct CustomProviderCredentialStoreSpec {
         run("save and load custom provider credentials", recorder: recorder) {
             withTemporaryDirectory(recorder: recorder) { directoryURL in
                 let store = CustomProviderCredentialStore(directoryURL: directoryURL)
-                let filePath = expectNoThrow(
+                let saveResult = expectNoThrow(
                     recorder: recorder,
                     "saving a valid credential should succeed"
                 ) {
@@ -19,7 +19,11 @@ struct CustomProviderCredentialStoreSpec {
                     )
                 }
 
-                guard let filePath else { return }
+                guard let saveResult else { return }
+                guard case .created(let createdRecord) = saveResult else {
+                    recorder.recordFailure("first save should create a new credential file")
+                    return
+                }
 
                 let loadResult = store.loadAll()
                 expectEqual(loadResult.issues.count, 0, "valid credential files should load without issues", recorder: recorder)
@@ -32,51 +36,66 @@ struct CustomProviderCredentialStoreSpec {
                 expectEqual(record.isDisabled, false, "newly saved credentials should start enabled", recorder: recorder)
                 expectEqual(
                     record.filePath.standardizedFileURL.path,
-                    filePath.standardizedFileURL.path,
+                    createdRecord.filePath.standardizedFileURL.path,
                     "loaded record should point to the saved file",
                     recorder: recorder
                 )
 
-                let permissions = filePermissions(at: filePath)
+                let permissions = filePermissions(at: record.filePath)
                 expectEqual(permissions, 0o600, "credential files should be written with 0600 permissions", recorder: recorder)
             }
         }
 
-        run("concurrent toggles stay serialized and preserve file integrity", recorder: recorder) {
+        run("concurrent saves deduplicate the same logical credential", recorder: recorder) {
             withTemporaryDirectory(recorder: recorder) { directoryURL in
                 let store = CustomProviderCredentialStore(directoryURL: directoryURL)
-                let filePath = expectNoThrow(
-                    recorder: recorder,
-                    "saving a credential before toggling should succeed"
-                ) {
-                    try store.save(providerID: "nvidia", apiKey: "nvapi-abcdef1234567890", label: "toggle-target")
-                }
-
-                guard let filePath else { return }
-
-                let toggleCount = 25
+                let saveCount = 25
                 let group = DispatchGroup()
                 let queue = DispatchQueue.global(qos: .userInitiated)
 
-                for _ in 0..<toggleCount {
+                for _ in 0..<saveCount {
                     group.enter()
                     queue.async {
                         defer { group.leave() }
-                        _ = try? store.toggleDisabled(filePath: filePath)
+                        _ = try? store.save(
+                            providerID: "nvidia",
+                            apiKey: "nvapi-abcdef1234567890",
+                            label: "toggle-target"
+                        )
                     }
                 }
 
                 group.wait()
 
                 let loadResult = store.loadAll()
-                expectEqual(loadResult.issues.count, 0, "concurrent toggles should not corrupt the credential file", recorder: recorder)
-                expectEqual(loadResult.records.count, 1, "toggled credential should still be loadable", recorder: recorder)
-                expectEqual(
-                    loadResult.records.first?.isDisabled,
-                    toggleCount % 2 == 1,
-                    "final disabled state should match toggle parity",
-                    recorder: recorder
-                )
+                expectEqual(loadResult.issues.count, 0, "concurrent saves should not corrupt the credential file", recorder: recorder)
+                expectEqual(loadResult.records.count, 1, "saving the same key repeatedly should produce one logical credential file", recorder: recorder)
+                expectEqual(loadResult.records.first?.isDisabled, false, "duplicate saves should leave the logical credential enabled", recorder: recorder)
+            }
+        }
+
+        run("saving an existing disabled credential re-enables it instead of creating a duplicate", recorder: recorder) {
+            withTemporaryDirectory(recorder: recorder) { directoryURL in
+                let store = CustomProviderCredentialStore(directoryURL: directoryURL)
+                _ = try? store.save(providerID: "nvidia", apiKey: "nvapi-abcdef1234567890", label: "primary")
+                _ = try? store.setDisabled(providerID: "nvidia", apiKey: "nvapi-abcdef1234567890", isDisabled: true)
+
+                let saveResult = expectNoThrow(
+                    recorder: recorder,
+                    "saving an existing disabled credential should succeed"
+                ) {
+                    try store.save(providerID: "nvidia", apiKey: "nvapi-abcdef1234567890", label: "primary")
+                }
+
+                guard let saveResult else { return }
+                guard case .reenabled = saveResult else {
+                    recorder.recordFailure("saving an existing disabled credential should re-enable it")
+                    return
+                }
+
+                let loadResult = store.loadAll()
+                expectEqual(loadResult.records.count, 1, "re-enabling should not create a duplicate file", recorder: recorder)
+                expectEqual(loadResult.records.first?.isDisabled, false, "the stored credential should be enabled again", recorder: recorder)
             }
         }
 
@@ -109,20 +128,29 @@ struct CustomProviderCredentialStoreSpec {
         run("delete removes stored credentials", recorder: recorder) {
             withTemporaryDirectory(recorder: recorder) { directoryURL in
                 let store = CustomProviderCredentialStore(directoryURL: directoryURL)
-                let filePath = expectNoThrow(
+                let saveResult = expectNoThrow(
                     recorder: recorder,
                     "saving a credential before delete should succeed"
                 ) {
                     try store.save(providerID: "nvidia", apiKey: "nvapi-delete1234567890", label: "delete-me")
                 }
 
-                guard let filePath else { return }
-
-                tryExpectNoThrow(recorder: recorder, "deleting an existing credential should succeed") {
-                    try store.delete(filePath: filePath)
+                guard let saveResult else { return }
+                guard case .created(let record) = saveResult else {
+                    recorder.recordFailure("delete precondition should create a credential file")
+                    return
                 }
 
-                expectEqual(FileManager.default.fileExists(atPath: filePath.path), false, "deleted credential file should be removed from disk", recorder: recorder)
+                let deletedCount = expectNoThrow(
+                    recorder: recorder,
+                    "deleting an existing credential should succeed"
+                ) {
+                    try store.delete(providerID: "nvidia", apiKey: "nvapi-delete1234567890")
+                }
+                guard let deletedCount else { return }
+                expectEqual(deletedCount, 1, "delete should remove one matching credential file", recorder: recorder)
+
+                expectEqual(FileManager.default.fileExists(atPath: record.filePath.path), false, "deleted credential file should be removed from disk", recorder: recorder)
                 expectEqual(store.loadAll().records.count, 0, "deleted credentials should not be returned by loadAll", recorder: recorder)
             }
         }

@@ -7,7 +7,11 @@ struct CustomProviderDefinition: Identifiable, Equatable {
     let helpText: String?
     let iconSystemName: String?
     let modelAliases: [String]
-    let inlineKeyCount: Int
+    let inlineAPIKeys: [String]
+
+    var inlineKeyCount: Int {
+        inlineAPIKeys.count
+    }
     
     var effectiveHelpText: String {
         if let helpText, !helpText.isEmpty {
@@ -46,9 +50,12 @@ struct CustomProviderDefinition: Identifiable, Equatable {
 }
 
 struct CustomProviderCredential: Identifiable, Equatable {
-    let id: String
     let providerID: String
+    let apiKey: String
     let label: String
-    let filePath: URL
     let isDisabled: Bool
+
+    var id: String {
+        "\(providerID)|\(apiKey)"
+    }
 }

@@ -89,10 +89,12 @@ class ServerManager: ObservableObject {
     private let processQueue = DispatchQueue(label: "io.automaze.vibeproxy.server-process", qos: .userInitiated)
     private let credentialMutationQueue = DispatchQueue(label: "io.automaze.vibeproxy.credential-mutations", qos: .userInitiated)
     private let configInputStateQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-input-state", qos: .userInitiated)
+    private let configResolutionQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-resolution", qos: .userInitiated)
     private lazy var zaiAPIKeyStore = ZAIAPIKeyStore(directoryURL: authDirectoryURL())
     private lazy var customProviderCredentialStore = CustomProviderCredentialStore(directoryURL: authDirectoryURL())
     private var activeConfigPath = ""
     private var isRestartingForConfigUpdate = false
+    private var isResolvingConfigUpdate = false
     private var hasPendingConfigUpdate = false
     private var observedConfigInputsFingerprint = ""
     
@@ -121,6 +123,11 @@ class ServerManager: ObservableObject {
     private struct ConfigResolutionFailure: Error {
         let message: String
     }
+
+    private struct CustomProviderCredentialKey: Hashable {
+        let providerID: String
+        let apiKey: String
+    }
     
     var onLogUpdate: (([String]) -> Void)?
 
@@ -137,21 +144,43 @@ class ServerManager: ObservableObject {
 
     /// Check if a provider is enabled (defaults to true if not set)
     func isProviderEnabled(_ providerKey: String) -> Bool {
-        let userEnabled = enabledProviders[providerKey] ?? true
+        isProviderEnabled(providerKey, baseConfigRoot: nil, enabledProviderStates: enabledProviders)
+    }
+
+    private func isProviderEnabled(_ providerKey: String, baseConfigRoot: [String: Any]?) -> Bool {
+        isProviderEnabled(providerKey, baseConfigRoot: baseConfigRoot, enabledProviderStates: enabledProviders)
+    }
+
+    private func isProviderEnabled(
+        _ providerKey: String,
+        baseConfigRoot: [String: Any]?,
+        enabledProviderStates: [String: Bool]
+    ) -> Bool {
+        let userEnabled = enabledProviderStates[providerKey] ?? true
         guard userEnabled else {
             return false
         }
-        return providerConfigLockReason(providerKey) == nil
+        return providerConfigLockReason(providerKey, baseConfigRoot: baseConfigRoot) == nil
     }
 
     func providerConfigLockReason(_ providerKey: String) -> String? {
+        providerConfigLockReason(providerKey, baseConfigRoot: nil)
+    }
+
+    private func providerConfigLockReason(_ providerKey: String, baseConfigRoot: [String: Any]?) -> String? {
         guard let oauthProviderKey = ProviderCatalog.oauthProviderKeys[providerKey] else {
             return nil
         }
-        guard case .success(let baseConfig) = loadBaseConfigRoot() else {
-            return nil
+        let root: [String: Any]
+        if let baseConfigRoot {
+            root = baseConfigRoot
+        } else {
+            guard case .success(let baseConfig) = loadBaseConfigRoot() else {
+                return nil
+            }
+            root = baseConfig.root
         }
-        guard ConfigComposer.isOAuthProviderWildcardExcluded(oauthProviderKey, in: baseConfig.root) else {
+        guard ConfigComposer.isOAuthProviderWildcardExcluded(oauthProviderKey, in: root) else {
             return nil
         }
         return "Disabled in config via oauth-excluded-models. Remove the '*' exclusion for \(oauthProviderKey) to enable it here."
@@ -551,11 +580,55 @@ class ServerManager: ObservableObject {
             guard let self else { return }
 
             do {
-                _ = try self.customProviderCredentialStore.save(providerID: providerID, apiKey: apiKey)
-                self.addLog("✓ Saved API key for custom provider: \(providerID)")
+                let baseConfig: LoadedBaseConfig
+                switch self.loadBaseConfigRoot() {
+                case .success(let loadedBaseConfig):
+                    baseConfig = loadedBaseConfig
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        completion(false, error.message)
+                    }
+                    return
+                }
+
+                let customProviders = ConfigComposer.parseCustomProviders(
+                    from: baseConfig.root,
+                    reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
+                )
+                guard let provider = customProviders.first(where: { $0.id == providerID }) else {
+                    DispatchQueue.main.async {
+                        completion(false, "Custom provider '\(providerID)' is not defined in config.yaml.")
+                    }
+                    return
+                }
+
+                if provider.inlineAPIKeys.contains(apiKey) {
+                    self.addLog("✓ API key for custom provider \(providerID) already exists in config")
+                    DispatchQueue.main.async {
+                        completion(true, "API key already exists in config")
+                    }
+                    return
+                }
+
+                let saveResult = try self.customProviderCredentialStore.save(providerID: providerID, apiKey: apiKey)
+                switch saveResult {
+                case .created(let record):
+                    self.addLog("✓ Saved API key for custom provider: \(record.providerID)")
+                case .alreadyPresent(let record):
+                    self.addLog("✓ Custom provider key already present: \(record.label)")
+                case .reenabled(let record):
+                    self.addLog("✓ Re-enabled custom provider key: \(record.label)")
+                }
                 self.refreshAuthBackedConfiguration()
                 DispatchQueue.main.async {
-                    completion(true, "API key saved successfully")
+                    switch saveResult {
+                    case .created:
+                        completion(true, "API key saved successfully")
+                    case .alreadyPresent:
+                        completion(true, "API key already exists")
+                    case .reenabled:
+                        completion(true, "API key was already stored and has been re-enabled")
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -582,8 +655,15 @@ class ServerManager: ObservableObject {
     @discardableResult
     func deleteCustomProviderCredential(_ credential: CustomProviderCredential) -> Bool {
         do {
-            try customProviderCredentialStore.delete(filePath: credential.filePath)
+            let deletedCount = try customProviderCredentialStore.delete(
+                providerID: credential.providerID,
+                apiKey: credential.apiKey
+            )
             addLog("✓ Removed custom provider key: \(credential.label)")
+            if deletedCount > 1 {
+                addLog("✓ Removed \(deletedCount) duplicate credential files for \(credential.providerID)")
+            }
+            markObservedConfigInputsCurrent()
             reloadCustomProviders()
             requestConfigUpdate()
             return true
@@ -596,7 +676,17 @@ class ServerManager: ObservableObject {
     @discardableResult
     func toggleCustomProviderCredentialDisabled(_ credential: CustomProviderCredential) -> Bool {
         do {
-            _ = try customProviderCredentialStore.toggleDisabled(filePath: credential.filePath)
+            try customProviderCredentialStore.setDisabled(
+                providerID: credential.providerID,
+                apiKey: credential.apiKey,
+                isDisabled: !credential.isDisabled
+            )
+            addLog(
+                credential.isDisabled
+                    ? "✓ Enabled custom provider key: \(credential.label)"
+                    : "⚠️ Disabled custom provider key: \(credential.label)"
+            )
+            markObservedConfigInputsCurrent()
             reloadCustomProviders()
             requestConfigUpdate()
             return true
@@ -614,24 +704,8 @@ class ServerManager: ObservableObject {
                 from: config.root,
                 reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
             )
-            let managedProviderIDs = Set(providers.map { $0.id })
             let credentialRecords = loadCustomProviderCredentialRecords()
-            let credentials = Dictionary(
-                grouping: credentialRecords.filter { managedProviderIDs.contains($0.providerID) },
-                by: \.providerID
-            ).mapValues { records in
-                records
-                    .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
-                    .map {
-                        CustomProviderCredential(
-                            id: $0.filePath.lastPathComponent,
-                            providerID: $0.providerID,
-                            label: $0.label,
-                            filePath: $0.filePath,
-                            isDisabled: $0.isDisabled
-                        )
-                    }
-            }
+            let credentials = logicalCustomProviderCredentials(from: credentialRecords, providers: providers)
 
             DispatchQueue.main.async {
                 self.customProviders = providers
@@ -659,6 +733,12 @@ class ServerManager: ObservableObject {
     }
 
     private func resolveConfigPath() -> Result<String, ConfigResolutionFailure> {
+        resolveConfigPath(enabledProviderStates: enabledProviders)
+    }
+
+    private func resolveConfigPath(
+        enabledProviderStates: [String: Bool]
+    ) -> Result<String, ConfigResolutionFailure> {
         guard let bundledConfigPath = bundledConfigPath() else {
             return .failure(ConfigResolutionFailure(message: "Could not locate the bundled config.yaml in the app bundle."))
         }
@@ -678,9 +758,19 @@ class ServerManager: ObservableObject {
             reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
         )
         let disabledProviders = ProviderCatalog.oauthProviderKeys.compactMap { serviceKey, oauthKey in
-            isProviderEnabled(serviceKey) ? nil : oauthKey
+            isProviderEnabled(
+                serviceKey,
+                baseConfigRoot: baseConfig.root,
+                enabledProviderStates: enabledProviderStates
+            ) ? nil : oauthKey
         }
-        let disabledCustomProviderIDs = Set(managedCustomProviders.map { $0.id }).filter { !isProviderEnabled($0) }
+        let disabledCustomProviderIDs = Set(managedCustomProviders.map { $0.id }).filter {
+            !isProviderEnabled(
+                $0,
+                baseConfigRoot: baseConfig.root,
+                enabledProviderStates: enabledProviderStates
+            )
+        }
         let needsMergedConfig =
             baseConfig.isUserConfig ||
             !zaiApiKeys.isEmpty ||
@@ -705,7 +795,11 @@ class ServerManager: ObservableObject {
                     isDisabled: $0.isDisabled
                 )
             },
-            includeManagedZAIProvider: isProviderEnabled(ProviderCatalog.managedZAIProviderName),
+            includeManagedZAIProvider: isProviderEnabled(
+                ProviderCatalog.managedZAIProviderName,
+                baseConfigRoot: baseConfig.root,
+                enabledProviderStates: enabledProviderStates
+            ),
             managedZAIProviderName: ProviderCatalog.managedZAIProviderName
         )
         
@@ -891,6 +985,60 @@ class ServerManager: ObservableObject {
         }
         return loadResult.records
     }
+
+    private func logicalCustomProviderCredentials(
+        from records: [CustomProviderCredentialRecord],
+        providers: [CustomProviderDefinition]
+    ) -> [String: [CustomProviderCredential]] {
+        let providersByID = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
+        let groupedRecords = Dictionary(
+            grouping: records.filter { providersByID[$0.providerID] != nil },
+            by: { CustomProviderCredentialKey(providerID: $0.providerID, apiKey: $0.apiKey) }
+        )
+
+        let logicalCredentials = groupedRecords.compactMapValues { groupedRecords -> CustomProviderCredential? in
+            guard let sampleRecord = groupedRecords.first,
+                  let provider = providersByID[sampleRecord.providerID],
+                  !provider.inlineAPIKeys.contains(sampleRecord.apiKey) else {
+                return nil
+            }
+
+            let preferredRecord = groupedRecords.sorted { lhs, rhs in
+                if lhs.isDisabled != rhs.isDisabled {
+                    return !lhs.isDisabled
+                }
+
+                let labelComparison = lhs.label.localizedCaseInsensitiveCompare(rhs.label)
+                if labelComparison != .orderedSame {
+                    return labelComparison == .orderedAscending
+                }
+
+                return lhs.filePath.lastPathComponent < rhs.filePath.lastPathComponent
+            }.first!
+
+            return CustomProviderCredential(
+                providerID: sampleRecord.providerID,
+                apiKey: sampleRecord.apiKey,
+                label: preferredRecord.label,
+                isDisabled: groupedRecords.allSatisfy { $0.isDisabled }
+            )
+        }
+
+        return Dictionary(grouping: logicalCredentials.values, by: \.providerID).mapValues { credentials in
+            credentials.sorted { lhs, rhs in
+                if lhs.isDisabled != rhs.isDisabled {
+                    return !lhs.isDisabled
+                }
+
+                let labelComparison = lhs.label.localizedCaseInsensitiveCompare(rhs.label)
+                if labelComparison != .orderedSame {
+                    return labelComparison == .orderedAscending
+                }
+
+                return lhs.id < rhs.id
+            }
+        }
+    }
     
     private func publishConfigError(_ message: String) {
         let update = {
@@ -920,7 +1068,7 @@ class ServerManager: ObservableObject {
 
     private func requestConfigUpdate() {
         let update: () -> Void = { [weak self] in
-            self?.applyConfigUpdate()
+            self?.beginConfigUpdateEvaluation()
         }
         if Thread.isMainThread {
             update()
@@ -928,20 +1076,56 @@ class ServerManager: ObservableObject {
             DispatchQueue.main.async(execute: update)
         }
     }
-    
-    private func applyConfigUpdate() {
-        assert(Thread.isMainThread, "applyConfigUpdate must run on the main thread")
+
+    private func beginConfigUpdateEvaluation() {
+        assert(Thread.isMainThread, "beginConfigUpdateEvaluation must run on the main thread")
 
         guard !isRestartingForConfigUpdate else {
             hasPendingConfigUpdate = true
             return
         }
-        
-        let configPath = getConfigPath()
-        guard !configPath.isEmpty else {
+
+        guard !isResolvingConfigUpdate else {
+            hasPendingConfigUpdate = true
             return
         }
-        
+
+        let enabledProviderSnapshot = enabledProviders
+        hasPendingConfigUpdate = false
+        isResolvingConfigUpdate = true
+
+        configResolutionQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let result = self.resolveConfigPath(enabledProviderStates: enabledProviderSnapshot)
+            DispatchQueue.main.async { [weak self] in
+                self?.finishConfigUpdateResolution(result)
+            }
+        }
+    }
+
+    private func finishConfigUpdateResolution(_ result: Result<String, ConfigResolutionFailure>) {
+        assert(Thread.isMainThread, "finishConfigUpdateResolution must run on the main thread")
+
+        isResolvingConfigUpdate = false
+
+        guard !hasPendingConfigUpdate else {
+            requestConfigUpdate()
+            return
+        }
+
+        let configPath: String
+        switch result {
+        case .success(let resolvedPath):
+            clearConfigError()
+            configPath = resolvedPath
+        case .failure(let error):
+            publishConfigError(error.message)
+            return
+        }
+
         let shouldRestart = isRunning && !activeConfigPath.isEmpty && activeConfigPath != configPath
         if shouldRestart {
             isRestartingForConfigUpdate = true

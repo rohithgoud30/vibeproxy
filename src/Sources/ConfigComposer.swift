@@ -22,8 +22,7 @@ enum ConfigComposer {
     ) -> [CustomProviderDefinition] {
         stringKeyedDictionaryArray(root["openai-compatibility"])
             .compactMap { entry in
-                guard let providerID = entry["name"] as? String,
-                      !providerID.isEmpty,
+                guard let providerID = normalizedProviderID(from: entry),
                       !reservedProviderIDs.contains(providerID) else {
                     return nil
                 }
@@ -39,7 +38,7 @@ enum ConfigComposer {
                     helpText: entry["help-text"] as? String,
                     iconSystemName: entry["icon-system"] as? String,
                     modelAliases: modelAliases,
-                    inlineKeyCount: apiKeyEntries(from: entry).count
+                    inlineAPIKeys: deduplicatedAPIKeys(from: entry)
                 )
             }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -49,17 +48,83 @@ enum ConfigComposer {
         in root: [String: Any],
         reservedProviderIDs: Set<String>
     ) -> [String] {
-        stringKeyedDictionaryArray(root["openai-compatibility"]).compactMap { entry in
-            guard let providerID = normalizedString(entry["name"]),
-                  !reservedProviderIDs.contains(providerID) else {
-                return nil
+        guard let rawOpenAICompatibility = root["openai-compatibility"] else {
+            return []
+        }
+        guard let entries = rawOpenAICompatibility as? [Any] else {
+            return ["openai-compatibility must be an array of provider mappings."]
+        }
+
+        var errors: [String] = []
+        var seenProviderIDs: Set<String> = []
+
+        for (index, rawEntry) in entries.enumerated() {
+            let path = "openai-compatibility[\(index)]"
+
+            guard let entry = stringKeyedDictionary(rawEntry) else {
+                errors.append("\(path) must be a mapping.")
+                continue
+            }
+
+            guard let rawProviderName = entry["name"] as? String else {
+                errors.append("\(path) must define a string name.")
+                continue
+            }
+
+            guard let providerID = normalizedString(rawProviderName) else {
+                errors.append("\(path) must define a non-empty name.")
+                continue
+            }
+
+            guard rawProviderName == providerID else {
+                errors.append("Provider name '\(rawProviderName)' must not include leading or trailing whitespace.")
+                continue
+            }
+
+            if seenProviderIDs.contains(providerID) {
+                errors.append("Duplicate openai-compatibility provider '\(providerID)' is not allowed.")
+            } else {
+                seenProviderIDs.insert(providerID)
+            }
+
+            if reservedProviderIDs.contains(providerID), providerID != ProviderCatalog.managedZAIProviderName {
+                errors.append("Provider '\(providerID)' is reserved and cannot be declared under openai-compatibility.")
+                continue
+            }
+
+            if let modelsValue = entry["models"] {
+                errors.append(contentsOf: validateMappingArray(modelsValue, path: "\(path).models"))
+            }
+
+            if let apiKeyEntriesValue = entry["api-key-entries"] {
+                if let apiKeyEntries = apiKeyEntriesValue as? [Any] {
+                    for (apiKeyIndex, rawAPIKeyEntry) in apiKeyEntries.enumerated() {
+                        let apiKeyPath = "\(path).api-key-entries[\(apiKeyIndex)]"
+                        guard let apiKeyEntry = stringKeyedDictionary(rawAPIKeyEntry) else {
+                            errors.append("\(apiKeyPath) must be a mapping.")
+                            continue
+                        }
+                        guard normalizedString(apiKeyEntry["api-key"]) != nil else {
+                            errors.append("\(apiKeyPath) must define a non-empty api-key.")
+                            continue
+                        }
+                    }
+                } else {
+                    errors.append("\(path).api-key-entries must be an array of mappings.")
+                }
+            }
+
+            if providerID == ProviderCatalog.managedZAIProviderName {
+                continue
             }
 
             guard normalizedString(entry["base-url"]) != nil else {
-                return "Custom provider '\(providerID)' must define a non-empty base-url."
+                errors.append("Custom provider '\(providerID)' must define a non-empty base-url.")
+                continue
             }
-            return nil
         }
+
+        return errors
     }
     
     static func composeRuntimeConfig(
@@ -97,15 +162,17 @@ enum ConfigComposer {
         var mergedOpenAICompatibility: [[String: Any]] = []
         var managedZAIBaseEntry: [String: Any]?
         for entry in stringKeyedDictionaryArray(mergedRoot["openai-compatibility"]) {
-            guard let providerName = entry["name"] as? String, !providerName.isEmpty else {
+            guard let providerName = normalizedProviderID(from: entry) else {
                 continue
             }
+
+            var sanitizedEntry = stripCustomProviderUIMetadata(from: entry)
+            sanitizedEntry["name"] = providerName
             if providerName == managedZAIProviderName {
-                managedZAIBaseEntry = entry
+                managedZAIBaseEntry = sanitizedEntry
                 continue
             }
             
-            var sanitizedEntry = stripCustomProviderUIMetadata(from: entry)
             if managedCustomProviderIDs.contains(providerName) {
                 if disabledCustomProviderIDs.contains(providerName) {
                     continue
@@ -228,23 +295,29 @@ enum ConfigComposer {
         var indexByName: [String: Int] = [:]
         
         for (index, entry) in base.enumerated() {
-            if let name = entry["name"] as? String, !name.isEmpty {
+            if let name = normalizedProviderID(from: entry) {
                 indexByName[name] = index
+                if (mergedEntries[index]["name"] as? String) != name {
+                    mergedEntries[index]["name"] = name
+                }
             }
         }
         
         for overlayEntry in overlay {
-            guard let name = overlayEntry["name"] as? String, !name.isEmpty else {
+            guard let name = normalizedProviderID(from: overlayEntry) else {
                 mergedEntries.append(overlayEntry)
                 continue
             }
+
+            var canonicalOverlayEntry = overlayEntry
+            canonicalOverlayEntry["name"] = name
             
             if let existingIndex = indexByName[name] {
                 let existingEntry = mergedEntries[existingIndex]
-                mergedEntries[existingIndex] = mergeDictionary(existingEntry, overlaidWith: overlayEntry)
+                mergedEntries[existingIndex] = mergeDictionary(existingEntry, overlaidWith: canonicalOverlayEntry)
             } else {
                 indexByName[name] = mergedEntries.count
-                mergedEntries.append(overlayEntry)
+                mergedEntries.append(canonicalOverlayEntry)
             }
         }
         
@@ -253,11 +326,15 @@ enum ConfigComposer {
     
     private static func apiKeyEntries(from entry: [String: Any]) -> [[String: String]] {
         stringKeyedDictionaryArray(entry["api-key-entries"]).compactMap { keyEntry in
-            guard let apiKey = keyEntry["api-key"] as? String else {
+            guard let apiKey = normalizedString(keyEntry["api-key"]) else {
                 return nil
             }
             return ["api-key": apiKey]
         }
+    }
+
+    private static func deduplicatedAPIKeys(from entry: [String: Any]) -> [String] {
+        deduplicatedAPIKeyEntries(apiKeyEntries(from: entry)).compactMap { $0["api-key"] }
     }
     
     private static func deduplicatedAPIKeyEntries(_ entries: [[String: String]]) -> [[String: String]] {
@@ -311,6 +388,22 @@ enum ConfigComposer {
         }
 
         return entry
+    }
+
+    private static func normalizedProviderID(from entry: [String: Any]) -> String? {
+        normalizedString(entry["name"])
+    }
+
+    private static func validateMappingArray(_ value: Any, path: String) -> [String] {
+        guard let array = value as? [Any] else {
+            return ["\(path) must be an array of mappings."]
+        }
+
+        var errors: [String] = []
+        for (index, rawEntry) in array.enumerated() where stringKeyedDictionary(rawEntry) == nil {
+            errors.append("\(path)[\(index)] must be a mapping.")
+        }
+        return errors
     }
 
     private static func defaultZAIModels() -> [[String: String]] {
