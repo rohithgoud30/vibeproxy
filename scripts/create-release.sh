@@ -26,7 +26,7 @@ DIST_DIR="$PROJECT_DIR/dist"
 # fork, rather than hardcoding one owner.
 REPO_SLUG="$(cd "$PROJECT_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null \
     || git -C "$PROJECT_DIR" config --get remote.origin.url \
-       | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
+       | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
 REPO_SLUG="${REPO_SLUG:-rohithgoud30/vibeproxy}"
 
 echo -e "${BLUE}📦 Creating VibeProxy Release ${VERSION} (${ARCH})${NC}"
