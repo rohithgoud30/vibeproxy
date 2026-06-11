@@ -179,29 +179,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
 
         menu.addItem(NSMenuItem.separator())
 
-        // Codex Proxy for Cursor (authenticated public relay)
-        let cursorHeaderItem = NSMenuItem(title: "Codex Proxy for Cursor: Off", action: nil, keyEquivalent: "")
-        cursorHeaderItem.tag = 110
-        menu.addItem(cursorHeaderItem)
+        // Codex Proxy for Cursor (authenticated public relay).
+        // Only show this section when cloudflared is actually bundled — e.g. an
+        // arm64-only build. On a build without it (Intel), hide the feature
+        // instead of offering a relay that can never start.
+        if TunnelManager.bundledCloudflaredPath() != nil {
+            let cursorHeaderItem = NSMenuItem(title: "Codex Proxy for Cursor: Off", action: nil, keyEquivalent: "")
+            cursorHeaderItem.tag = 110
+            menu.addItem(cursorHeaderItem)
 
-        let cursorToggleItem = NSMenuItem(title: "Turn On Cursor Proxy", action: #selector(toggleCursorRelay), keyEquivalent: "")
-        cursorToggleItem.tag = 111
-        menu.addItem(cursorToggleItem)
+            let cursorToggleItem = NSMenuItem(title: "Turn On Cursor Proxy", action: #selector(toggleCursorRelay), keyEquivalent: "")
+            cursorToggleItem.tag = 111
+            menu.addItem(cursorToggleItem)
 
-        let copyCursorURLItem = NSMenuItem(title: "Copy Cursor URL", action: #selector(copyCursorURL), keyEquivalent: "")
-        copyCursorURLItem.isEnabled = false
-        copyCursorURLItem.tag = 112
-        menu.addItem(copyCursorURLItem)
+            let copyCursorURLItem = NSMenuItem(title: "Copy Cursor URL", action: #selector(copyCursorURL), keyEquivalent: "")
+            copyCursorURLItem.isEnabled = false
+            copyCursorURLItem.tag = 112
+            menu.addItem(copyCursorURLItem)
 
-        let copyCursorKeyItem = NSMenuItem(title: "Copy API Key", action: #selector(copyCursorAPIKey), keyEquivalent: "")
-        copyCursorKeyItem.tag = 113
-        menu.addItem(copyCursorKeyItem)
+            let copyCursorKeyItem = NSMenuItem(title: "Copy API Key", action: #selector(copyCursorAPIKey), keyEquivalent: "")
+            copyCursorKeyItem.tag = 113
+            menu.addItem(copyCursorKeyItem)
 
-        let regenerateCursorKeyItem = NSMenuItem(title: "Regenerate API Key", action: #selector(regenerateCursorAPIKey), keyEquivalent: "")
-        regenerateCursorKeyItem.tag = 114
-        menu.addItem(regenerateCursorKeyItem)
+            let regenerateCursorKeyItem = NSMenuItem(title: "Regenerate API Key", action: #selector(regenerateCursorAPIKey), keyEquivalent: "")
+            regenerateCursorKeyItem.tag = 114
+            menu.addItem(regenerateCursorKeyItem)
 
-        menu.addItem(NSMenuItem.separator())
+            menu.addItem(NSMenuItem.separator())
+        }
 
         // Check for Updates
         let checkForUpdatesItem = NSMenuItem(title: "Check for Updates...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "u")
@@ -277,7 +282,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
                         // User always connects to 8317 (thinking proxy)
                         self?.showNotification(title: "Server Started", body: "VibeProxy is now running")
                         // Bring the Cursor relay back up if the user left it on
-                        if self?.cursorRelayManager.isEnabled == true {
+                        // (only where cloudflared is bundled to back it).
+                        if self?.cursorRelayManager.isEnabled == true,
+                           TunnelManager.bundledCloudflaredPath() != nil {
                             self?.startCursorRelay(announceFailure: false)
                         }
                     } else {
