@@ -79,7 +79,9 @@ class CursorRelayServer {
 
     func stop() {
         stateQueue.sync {
-            guard isRunning else { return }
+            // Gate on the listener, not isRunning: during startup the listener
+            // exists before it reports .ready, and we must still cancel it.
+            guard listener != nil else { return }
             listener?.cancel()
             listener = nil
             DispatchQueue.main.async { [weak self] in
