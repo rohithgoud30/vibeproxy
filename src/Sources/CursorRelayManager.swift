@@ -39,9 +39,16 @@ class CursorRelayManager {
         return url + "/v1"
     }
 
-    /// Whether the user wants the relay on (persisted; relay auto-starts with the server).
+    /// Whether the relay should run (persisted; it auto-starts with the server).
+    /// Enabled by default — the Cursor proxy turns on when the app launches
+    /// unless the user has explicitly turned it off.
     var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey) }
+        get {
+            guard UserDefaults.standard.object(forKey: Self.enabledDefaultsKey) != nil else {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey)
+        }
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledDefaultsKey) }
     }
 
