@@ -107,23 +107,59 @@ class CursorRelayServer {
                 buffer.append(data)
             }
 
-            if let headerEndRange = buffer.range(of: Data("\r\n\r\n".utf8)) {
-                let headerData = buffer.subdata(in: buffer.startIndex..<headerEndRange.lowerBound)
-                let bodySoFar = buffer.subdata(in: headerEndRange.upperBound..<buffer.endIndex)
-                let headerText = String(decoding: headerData, as: UTF8.self)
-
-                let expectedBodyLength = Self.contentLength(inHeader: headerText)
-                if bodySoFar.count < expectedBodyLength && !isComplete {
+            guard let headerEndRange = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                // Header terminator not seen yet.
+                if isComplete {
+                    connection.cancel()
+                } else if buffer.count > Self.maxHeaderBytes {
+                    self.sendJSONResponse(to: connection, statusCode: 431, reason: "Request Header Fields Too Large",
+                                          jsonBody: Self.errorBody(message: "Headers too large", type: "relay_error"))
+                } else {
                     self.receiveNextChunk(from: connection, accumulated: buffer)
-                    return
                 }
-
-                self.handleRequest(headerText: headerText, body: bodySoFar, connection: connection)
-            } else if isComplete {
-                connection.cancel()
-            } else {
-                self.receiveNextChunk(from: connection, accumulated: buffer)
+                return
             }
+
+            let headerData = buffer.subdata(in: buffer.startIndex..<headerEndRange.lowerBound)
+            let headerText = String(decoding: headerData, as: UTF8.self)
+            guard let head = Self.parseHead(headerText) else {
+                self.sendJSONResponse(to: connection, statusCode: 400, reason: "Bad Request",
+                                      jsonBody: Self.errorBody(message: "Invalid request", type: "relay_error"))
+                return
+            }
+
+            // CORS preflight carries no Authorization header (browsers send it
+            // before the real request), so answer it before the auth gate.
+            if head.method == "OPTIONS" {
+                self.sendPreflight(to: connection)
+                return
+            }
+
+            // Authenticate as soon as the headers are known — BEFORE buffering
+            // the (possibly huge) body — so an unauthenticated caller can't make
+            // the relay accumulate memory before being rejected.
+            let authorization = head.headers.first(where: { $0.0.lowercased() == "authorization" })?.1 ?? ""
+            guard !self.apiKey.isEmpty, authorization == "Bearer \(self.apiKey)" else {
+                NSLog("[CursorRelay] Rejected unauthorized request: %@ %@", head.method, head.path)
+                self.sendJSONResponse(to: connection, statusCode: 401, reason: "Unauthorized",
+                                      jsonBody: Self.errorBody(message: "Unauthorized", type: "auth_error"))
+                return
+            }
+
+            // Authorized — bound and buffer the body up to Content-Length.
+            let expectedBodyLength = Self.contentLength(inHeader: headerText)
+            if expectedBodyLength > Self.maxBodyBytes {
+                self.sendJSONResponse(to: connection, statusCode: 413, reason: "Payload Too Large",
+                                      jsonBody: Self.errorBody(message: "Request body too large", type: "relay_error"))
+                return
+            }
+            let bodySoFar = buffer.subdata(in: headerEndRange.upperBound..<buffer.endIndex)
+            if bodySoFar.count < expectedBodyLength && !isComplete {
+                self.receiveNextChunk(from: connection, accumulated: buffer)
+                return
+            }
+
+            self.dispatchAuthorized(head: head, body: bodySoFar, connection: connection)
         }
     }
 
@@ -139,24 +175,21 @@ class CursorRelayServer {
 
     // MARK: - Request handling
 
-    private func handleRequest(headerText: String, body: Data, connection: NWConnection) {
+    private static let maxHeaderBytes = 64 * 1024
+    private static let maxBodyBytes = 50 * 1024 * 1024  // 50 MB — generous for long contexts, bounds memory
+
+    private struct RequestHead {
+        let method: String
+        let path: String
+        let version: String
+        let headers: [(String, String)]
+    }
+
+    private static func parseHead(_ headerText: String) -> RequestHead? {
         let lines = headerText.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else {
-            sendJSONResponse(to: connection, statusCode: 400, reason: "Bad Request",
-                             jsonBody: Self.errorBody(message: "Invalid request", type: "relay_error"))
-            return
-        }
-
+        guard let requestLine = lines.first else { return nil }
         let parts = requestLine.components(separatedBy: " ")
-        guard parts.count >= 3 else {
-            sendJSONResponse(to: connection, statusCode: 400, reason: "Bad Request",
-                             jsonBody: Self.errorBody(message: "Invalid request line", type: "relay_error"))
-            return
-        }
-
-        let method = parts[0]
-        let path = parts[1]
-        let httpVersion = parts[2]
+        guard parts.count >= 3 else { return nil }
 
         // Collect headers while preserving original casing
         var headers: [(String, String)] = []
@@ -166,33 +199,24 @@ class CursorRelayServer {
             let value = String(line[line.index(after: separatorIndex)...]).trimmingCharacters(in: .whitespaces)
             headers.append((name, value))
         }
+        return RequestHead(method: parts[0], path: parts[1], version: parts[2], headers: headers)
+    }
 
-        let authorization = headers.first(where: { $0.0.lowercased() == "authorization" })?.1 ?? ""
-        guard !apiKey.isEmpty, authorization == "Bearer \(apiKey)" else {
-            NSLog("[CursorRelay] Rejected unauthorized request: %@ %@", method, path)
-            sendJSONResponse(to: connection, statusCode: 401, reason: "Unauthorized",
-                             jsonBody: Self.errorBody(message: "Unauthorized", type: "auth_error"))
-            return
-        }
+    /// Routes an already-authenticated request to the upstream proxy.
+    private func dispatchAuthorized(head: RequestHead, body: Data, connection: NWConnection) {
+        NSLog("[CursorRelay] -> %@ %@ (%d bytes)", head.method, head.path, body.count)
 
-        if method == "OPTIONS" {
-            sendPreflight(to: connection)
-            return
-        }
-
-        NSLog("[CursorRelay] -> %@ %@ (%d bytes)", method, path, body.count)
-
-        if method == "GET" && (path == "/v1/models" || path.hasPrefix("/v1/models?")) {
-            forwardModelsRequest(path: path, connection: connection)
+        if head.method == "GET" && (head.path == "/v1/models" || head.path.hasPrefix("/v1/models?")) {
+            forwardModelsRequest(path: head.path, connection: connection)
             return
         }
 
         var forwardBody = body
-        if method == "POST" && path.contains("/chat/completions") {
+        if head.method == "POST" && head.path.contains("/chat/completions") {
             forwardBody = CursorRelayAliasMapper.rewriteChatBody(body)
         }
 
-        forwardRequest(method: method, path: path, version: httpVersion, headers: headers, body: forwardBody, clientConnection: connection)
+        forwardRequest(method: head.method, path: head.path, version: head.version, headers: head.headers, body: forwardBody, clientConnection: connection)
     }
 
     // MARK: - /v1/models (buffered so aliases can be injected)

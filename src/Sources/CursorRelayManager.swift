@@ -23,6 +23,14 @@ class CursorRelayManager {
 
     private(set) var isStarting = false
 
+    /// In-memory copy of the key for this session. Keeps the key stable even if
+    /// the Keychain is unwritable, so reads can't silently rotate credentials.
+    private var cachedAPIKey: String?
+
+    /// Bumped on every start()/stop(); in-flight start callbacks compare against
+    /// it and abort if a newer start/stop has superseded them.
+    private var startGeneration = 0
+
     var isRunning: Bool { server.isRunning && tunnel.isRunning }
 
     /// OpenAI-compatible base URL for Cursor, e.g. https://xxx.trycloudflare.com/v1
@@ -40,13 +48,20 @@ class CursorRelayManager {
     /// The relay API key — an authentication secret, so it lives in the
     /// Keychain (not UserDefaults). Generated on first use and persisted.
     var apiKey: String {
+        // Prefer the value already loaded this session so a failed Keychain
+        // write never causes a read to mint a fresh key.
+        if let cached = cachedAPIKey, !cached.isEmpty {
+            return cached
+        }
         if let existing = Self.keychainRead(), !existing.isEmpty {
+            cachedAPIKey = existing
             return existing
         }
         // Migrate any key written to UserDefaults by older builds — but only
         // scrub the plaintext copy once it is safely in the Keychain, so a
         // Keychain failure can't silently rotate the user's credentials.
         if let legacy = UserDefaults.standard.string(forKey: Self.legacyAPIKeyDefaultsKey), !legacy.isEmpty {
+            cachedAPIKey = legacy
             if Self.keychainWrite(legacy) {
                 UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
             }
@@ -58,6 +73,7 @@ class CursorRelayManager {
     @discardableResult
     func regenerateAPIKey() -> String {
         let key = Self.generateKey()
+        cachedAPIKey = key
         if Self.keychainWrite(key) {
             UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
         }
@@ -131,16 +147,23 @@ class CursorRelayManager {
     /// started once the relay listener has actually bound, so we never expose
     /// a public URL pointing at a relay that failed to come up.
     func start(completion: @escaping (Bool, String?) -> Void) {
+        startGeneration += 1
+        let generation = startGeneration
         server.apiKey = apiKey
         server.start()
         isStarting = true
         NotificationCenter.default.post(name: .serverStatusChanged, object: nil)
-        waitForRelayReady(attempts: 0, maxAttempts: 40, intervalMs: 50, completion: completion)
+        waitForRelayReady(generation: generation, attempts: 0, maxAttempts: 40, intervalMs: 50, completion: completion)
     }
 
-    private func waitForRelayReady(attempts: Int, maxAttempts: Int, intervalMs: Int, completion: @escaping (Bool, String?) -> Void) {
+    private func waitForRelayReady(generation: Int, attempts: Int, maxAttempts: Int, intervalMs: Int, completion: @escaping (Bool, String?) -> Void) {
+        // A stop() or newer start() superseded this attempt — abort silently.
+        guard generation == startGeneration else {
+            completion(false, nil)
+            return
+        }
         if server.isRunning {
-            startTunnel(completion: completion)
+            startTunnel(generation: generation, completion: completion)
             return
         }
         if attempts >= maxAttempts {
@@ -152,14 +175,22 @@ class CursorRelayManager {
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(intervalMs) / 1000.0) { [weak self] in
-            self?.waitForRelayReady(attempts: attempts + 1, maxAttempts: maxAttempts, intervalMs: intervalMs, completion: completion)
+            self?.waitForRelayReady(generation: generation, attempts: attempts + 1, maxAttempts: maxAttempts, intervalMs: intervalMs, completion: completion)
         }
     }
 
-    private func startTunnel(completion: @escaping (Bool, String?) -> Void) {
+    private func startTunnel(generation: Int, completion: @escaping (Bool, String?) -> Void) {
         tunnel.start(port: Int(Self.relayPort)) { [weak self] success, url in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // If a stop()/restart happened while the tunnel was coming up,
+                // don't report success — tear down whatever started instead.
+                guard generation == self.startGeneration else {
+                    self.tunnel.stop()
+                    self.server.stop()
+                    completion(false, nil)
+                    return
+                }
                 self.isStarting = false
                 if !success {
                     self.server.stop()
@@ -171,6 +202,7 @@ class CursorRelayManager {
     }
 
     func stop() {
+        startGeneration += 1  // invalidate any in-flight start
         tunnel.stop()
         server.stop()
         isStarting = false
