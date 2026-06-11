@@ -29,11 +29,11 @@ if [ "$APP_VERSION_CLEAN" = "dev" ]; then
 fi
 ARCH="arm64"
 DIST_DIR="$PROJECT_DIR/dist"
-# Derive the repo slug from the origin remote so the script is correct on any
-# fork, rather than hardcoding one owner.
-REPO_SLUG="$(cd "$PROJECT_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null \
-    || git -C "$PROJECT_DIR" config --get remote.origin.url \
-       | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
+# Derive the repo slug from the ORIGIN remote so the script targets this fork.
+# (Don't use `gh repo view` — for a fork it resolves to the upstream parent,
+# which produced release-notes links pointing at the wrong repo.)
+REPO_SLUG="$(git -C "$PROJECT_DIR" config --get remote.origin.url 2>/dev/null \
+    | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
 REPO_SLUG="${REPO_SLUG:-rohithgoud30/vibeproxy}"
 
 echo -e "${BLUE}📦 Creating VibeProxy Release ${VERSION} (${ARCH})${NC}"
