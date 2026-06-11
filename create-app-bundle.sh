@@ -76,12 +76,24 @@ if [ ! -f "$APP_DIR/Contents/Resources/cli-proxy-api-plus" ]; then
 fi
 echo -e "${GREEN}✅ cli-proxy-api-plus bundled: $(ls -lh "$APP_DIR/Contents/Resources/cli-proxy-api-plus" | awk '{print $5}')${NC}"
 
-if [ ! -f "$APP_DIR/Contents/Resources/cloudflared" ]; then
+CLOUDFLARED_BUNDLED="$APP_DIR/Contents/Resources/cloudflared"
+CLOUDFLARED_TARGET_ARCH="${TARGET_ARCH:-arm64}"
+if [ ! -f "$CLOUDFLARED_BUNDLED" ]; then
     echo -e "${YELLOW}⚠️ WARNING: cloudflared binary not found in bundle!${NC}"
     echo "Looking for cloudflared in source:"
     find "$SRC_DIR/Sources/Resources" -name "cloudflared" -ls
 else
-    echo -e "${GREEN}✅ cloudflared bundled: $(ls -lh "$APP_DIR/Contents/Resources/cloudflared" | awk '{print $5}')${NC}"
+    # The committed cloudflared is arm64. If this is an x86_64 build, shipping
+    # it would produce an Intel app whose tunnel can't launch — so drop it
+    # rather than bundle a non-functional binary. (The Cursor relay then simply
+    # isn't available on that arch; TunnelManager surfaces a clear message.)
+    CF_ARCHS="$(lipo -archs "$CLOUDFLARED_BUNDLED" 2>/dev/null || echo "unknown")"
+    if echo " $CF_ARCHS " | grep -q " $CLOUDFLARED_TARGET_ARCH "; then
+        echo -e "${GREEN}✅ cloudflared bundled ($CF_ARCHS): $(ls -lh "$CLOUDFLARED_BUNDLED" | awk '{print $5}')${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Bundled cloudflared is [$CF_ARCHS] but target is $CLOUDFLARED_TARGET_ARCH — removing it; the Cursor relay/tunnel will be unavailable in this build.${NC}"
+        rm -f "$CLOUDFLARED_BUNDLED"
+    fi
 fi
 
 # Copy app icon
