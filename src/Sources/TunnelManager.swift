@@ -19,7 +19,10 @@ class TunnelManager {
         var cloudflaredPath: String?
         if let resourcePath = Bundle.main.resourcePath {
             let bundledPath = (resourcePath as NSString).appendingPathComponent("cloudflared")
-            if FileManager.default.fileExists(atPath: bundledPath) {
+            // Require it to exist AND be executable — a present-but-non-executable
+            // binary would otherwise pass and then fail when launched.
+            if FileManager.default.fileExists(atPath: bundledPath),
+               FileManager.default.isExecutableFile(atPath: bundledPath) {
                 cloudflaredPath = bundledPath
             }
         }
