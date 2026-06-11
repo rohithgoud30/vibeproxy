@@ -6,7 +6,19 @@ class TunnelManager {
     private(set) var isRunning = false
     private(set) var publicURL: String?
     private let urlFoundLock = NSLock()
-    
+
+    /// Path to the cloudflared bundled in the app, or nil if it isn't present
+    /// or isn't executable (e.g. an Intel build where the arm64 binary was
+    /// dropped). Used to gate the Cursor relay UI so the feature is hidden
+    /// rather than present-but-broken when the tunnel binary is unavailable.
+    static func bundledCloudflaredPath() -> String? {
+        guard let resourcePath = Bundle.main.resourcePath else { return nil }
+        let path = (resourcePath as NSString).appendingPathComponent("cloudflared")
+        guard FileManager.default.fileExists(atPath: path),
+              FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
+    }
+
     func start(port: Int, completion: @escaping (Bool, String?) -> Void) {
         guard !isRunning else {
             completion(true, publicURL)
@@ -15,19 +27,8 @@ class TunnelManager {
         
         // Use only the cloudflared bundled with the app (Contents/Resources,
         // same pattern as cli-proxy-api-plus) so the tunnel never depends on
-        // whatever happens to be installed on the system
-        var cloudflaredPath: String?
-        if let resourcePath = Bundle.main.resourcePath {
-            let bundledPath = (resourcePath as NSString).appendingPathComponent("cloudflared")
-            // Require it to exist AND be executable — a present-but-non-executable
-            // binary would otherwise pass and then fail when launched.
-            if FileManager.default.fileExists(atPath: bundledPath),
-               FileManager.default.isExecutableFile(atPath: bundledPath) {
-                cloudflaredPath = bundledPath
-            }
-        }
-
-        guard let execPath = cloudflaredPath else {
+        // whatever happens to be installed on the system.
+        guard let execPath = Self.bundledCloudflaredPath() else {
             NSLog("[TunnelManager] Bundled cloudflared not found in app Resources")
             DispatchQueue.main.async {
                 self.showBundledCloudflaredMissingAlert()
