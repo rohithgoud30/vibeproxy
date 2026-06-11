@@ -76,6 +76,14 @@ if [ ! -f "$APP_DIR/Contents/Resources/cli-proxy-api-plus" ]; then
 fi
 echo -e "${GREEN}✅ cli-proxy-api-plus bundled: $(ls -lh "$APP_DIR/Contents/Resources/cli-proxy-api-plus" | awk '{print $5}')${NC}"
 
+if [ ! -f "$APP_DIR/Contents/Resources/cloudflared" ]; then
+    echo -e "${YELLOW}⚠️ WARNING: cloudflared binary not found in bundle!${NC}"
+    echo "Looking for cloudflared in source:"
+    find "$SRC_DIR/Sources/Resources" -name "cloudflared" -ls
+else
+    echo -e "${GREEN}✅ cloudflared bundled: $(ls -lh "$APP_DIR/Contents/Resources/cloudflared" | awk '{print $5}')${NC}"
+fi
+
 # Copy app icon
 if [ -f "$SRC_DIR/Sources/Resources/AppIcon.icns" ]; then
     cp "$SRC_DIR/Sources/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/"
@@ -156,7 +164,15 @@ if [ -n "$CODESIGN_IDENTITY" ]; then
         fi
         echo -e "${GREEN}✅ cli-proxy-api-plus signed${NC}"
     fi
-    
+
+    # Sign the cloudflared binary (required for notarization)
+    if [ -f "$APP_DIR/Contents/Resources/cloudflared" ]; then
+        echo -e "${BLUE}Signing cloudflared binary...${NC}"
+        codesign --force --sign "$CODESIGN_IDENTITY" --options runtime --timestamp \
+            "$APP_DIR/Contents/Resources/cloudflared"
+        echo -e "${GREEN}✅ cloudflared signed${NC}"
+    fi
+
     # Sign Sparkle.framework (required for notarization)
     if [ -d "$APP_DIR/Contents/Frameworks/Sparkle.framework" ]; then
         echo -e "${BLUE}Signing Sparkle.framework...${NC}"
