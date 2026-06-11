@@ -110,12 +110,18 @@ class TunnelManager {
             try process?.run()
             isRunning = true
             
-            // Timeout if URL not found in 10 seconds. Terminate the slow
-            // cloudflared so it can't print a URL and fire the callback later
-            // against a relay that has since been torn down.
+            // Timeout if URL not found in 10 seconds. Read/clear the shared
+            // urlFound flag under the same lock the stdout/stderr handlers use,
+            // so completion can't double-fire with contradictory values.
+            // Terminate the slow cloudflared so it can't print a URL later.
             DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
-                if !urlFound {
-                    self?.stop()
+                guard let self = self else { return }
+                self.urlFoundLock.lock()
+                let shouldFail = !urlFound
+                if shouldFail { urlFound = true }
+                self.urlFoundLock.unlock()
+                if shouldFail {
+                    self.stop()
                     completion(false, nil)
                 }
             }
