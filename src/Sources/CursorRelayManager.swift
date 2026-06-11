@@ -43,10 +43,13 @@ class CursorRelayManager {
         if let existing = Self.keychainRead(), !existing.isEmpty {
             return existing
         }
-        // Migrate any key written to UserDefaults by older builds, then scrub it.
+        // Migrate any key written to UserDefaults by older builds — but only
+        // scrub the plaintext copy once it is safely in the Keychain, so a
+        // Keychain failure can't silently rotate the user's credentials.
         if let legacy = UserDefaults.standard.string(forKey: Self.legacyAPIKeyDefaultsKey), !legacy.isEmpty {
-            Self.keychainWrite(legacy)
-            UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
+            if Self.keychainWrite(legacy) {
+                UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
+            }
             return legacy
         }
         return regenerateAPIKey()
@@ -55,8 +58,9 @@ class CursorRelayManager {
     @discardableResult
     func regenerateAPIKey() -> String {
         let key = Self.generateKey()
-        Self.keychainWrite(key)
-        UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
+        if Self.keychainWrite(key) {
+            UserDefaults.standard.removeObject(forKey: Self.legacyAPIKeyDefaultsKey)
+        }
         server.apiKey = key
         return key
     }
@@ -81,7 +85,9 @@ class CursorRelayManager {
         return key
     }
 
-    private static func keychainWrite(_ key: String) {
+    /// Persists the key to the Keychain. Returns true only on success.
+    @discardableResult
+    private static func keychainWrite(_ key: String) -> Bool {
         let data = Data(key.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -99,10 +105,14 @@ class CursorRelayManager {
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             if addStatus != errSecSuccess {
                 NSLog("[CursorRelay] Keychain add failed: %d", Int(addStatus))
+                return false
             }
+            return true
         } else if updateStatus != errSecSuccess {
             NSLog("[CursorRelay] Keychain update failed: %d", Int(updateStatus))
+            return false
         }
+        return true
     }
 
     private static func generateKey() -> String {
