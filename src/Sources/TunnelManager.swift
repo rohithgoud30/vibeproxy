@@ -13,48 +13,21 @@ class TunnelManager {
             return
         }
         
-        // Check if cloudflared is installed
-        let cloudflaredPaths = [
-            "/usr/local/bin/cloudflared",
-            "/opt/homebrew/bin/cloudflared",
-            "/usr/bin/cloudflared"
-        ]
-        
+        // Use only the cloudflared bundled with the app (Contents/Resources,
+        // same pattern as cli-proxy-api-plus) so the tunnel never depends on
+        // whatever happens to be installed on the system
         var cloudflaredPath: String?
-        for path in cloudflaredPaths {
-            if FileManager.default.fileExists(atPath: path) {
-                cloudflaredPath = path
-                break
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundledPath = (resourcePath as NSString).appendingPathComponent("cloudflared")
+            if FileManager.default.fileExists(atPath: bundledPath) {
+                cloudflaredPath = bundledPath
             }
         }
-        
-        // If not found, try using 'which'
-        if cloudflaredPath == nil {
-            let whichProcess = Process()
-            whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-            whichProcess.arguments = ["cloudflared"]
-            
-            let pipe = Pipe()
-            whichProcess.standardOutput = pipe
-            
-            do {
-                try whichProcess.run()
-                whichProcess.waitUntilExit()
-                
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !path.isEmpty {
-                    cloudflaredPath = path
-                }
-            } catch {
-                NSLog("[TunnelManager] Failed to locate cloudflared: %@", error.localizedDescription)
-            }
-        }
-        
+
         guard let execPath = cloudflaredPath else {
-            // Cloudflared not installed, provide instructions
+            NSLog("[TunnelManager] Bundled cloudflared not found in app Resources")
             DispatchQueue.main.async {
-                self.showCloudflaredInstallInstructions()
+                self.showBundledCloudflaredMissingAlert()
             }
             completion(false, nil)
             return
@@ -156,27 +129,16 @@ class TunnelManager {
         NotificationCenter.default.post(name: .serverStatusChanged, object: nil)
     }
     
-    private func showCloudflaredInstallInstructions() {
+    private func showBundledCloudflaredMissingAlert() {
         let alert = NSAlert()
-        alert.messageText = "Cloudflared Not Installed"
+        alert.messageText = "Bundled cloudflared Missing"
         alert.informativeText = """
-        To expose your server to the internet, you need to install cloudflared.
-        
-        Install via Homebrew:
-        brew install cloudflared
-        
-        Or download from:
-        https://github.com/cloudflare/cloudflared/releases
+        The cloudflared binary that ships inside VibeProxy.app could not be found.
+
+        The app bundle appears to be damaged or was built without it. Reinstall VibeProxy (or rebuild with 'make install') to restore it.
         """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Copy Install Command")
-        alert.addButton(withTitle: "Cancel")
-        
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString("brew install cloudflared", forType: .string)
-        }
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }
