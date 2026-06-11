@@ -342,6 +342,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             updateMenuBarStatus()
             showNotification(title: "Cursor Proxy Stopped", body: "The public relay and tunnel are off")
         } else {
+            // The relay only proxies to the local server; without it, every
+            // request would just return 502, so require the server first.
+            guard serverManager.isRunning else {
+                showNotification(title: "Start the Server First", body: "The Cursor proxy needs the VibeProxy server running")
+                return
+            }
             cursorRelayManager.isEnabled = true
             startCursorRelay(announceFailure: true)
         }
@@ -355,8 +361,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
                 pasteboard.clearContents()
                 pasteboard.setString(baseURL, forType: .string)
                 self?.showNotification(title: "Cursor Proxy Running", body: "Base URL copied: \(baseURL)")
-            } else if announceFailure {
-                self?.showNotification(title: "Cursor Proxy Failed", body: "Could not start the tunnel (is cloudflared installed?)")
+            } else if announceFailure, self?.cursorRelayManager.isEnabled == true {
+                // Only warn if the relay is still wanted — if the user turned it
+                // off mid-startup, the failure is expected, not an error.
+                self?.showNotification(title: "Cursor Proxy Failed", body: "Could not start the relay or tunnel")
             }
             self?.updateMenuBarStatus()
         }
@@ -434,6 +442,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         if let cursorToggleItem = menu.item(withTag: 111) {
             let active = cursorRelayManager.isRunning || cursorRelayManager.isStarting
             cursorToggleItem.title = active ? "Turn Off Cursor Proxy" : "Turn On Cursor Proxy"
+            // Can always turn it OFF; can only turn it ON when the server is up.
+            cursorToggleItem.isEnabled = active || serverManager.isRunning
         }
 
         if let copyCursorURLItem = menu.item(withTag: 112) {
