@@ -184,15 +184,17 @@ class CursorRelayManager {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // If a stop()/restart happened while the tunnel was coming up,
-                // don't report success — tear down whatever started instead.
+                // just bail: that newer path now owns the shared server/tunnel,
+                // so tearing them down here could kill an in-progress restart.
                 guard generation == self.startGeneration else {
-                    self.tunnel.stop()
-                    self.server.stop()
                     completion(false, nil)
                     return
                 }
                 self.isStarting = false
                 if !success {
+                    // Genuine failure on the current attempt — stop both, so a
+                    // slow cloudflared can't linger and later emit a URL.
+                    self.tunnel.stop()
                     self.server.stop()
                 }
                 NotificationCenter.default.post(name: .serverStatusChanged, object: nil)

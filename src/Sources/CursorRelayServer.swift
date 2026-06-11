@@ -121,6 +121,14 @@ class CursorRelayServer {
             }
 
             let headerData = buffer.subdata(in: buffer.startIndex..<headerEndRange.lowerBound)
+            // Enforce the header-size cap here too: a single chunk can both
+            // exceed the limit and contain the terminator, bypassing the
+            // not-yet-terminated branch above.
+            if headerData.count > Self.maxHeaderBytes {
+                self.sendJSONResponse(to: connection, statusCode: 431, reason: "Request Header Fields Too Large",
+                                      jsonBody: Self.errorBody(message: "Headers too large", type: "relay_error"))
+                return
+            }
             let headerText = String(decoding: headerData, as: UTF8.self)
             guard let head = Self.parseHead(headerText) else {
                 self.sendJSONResponse(to: connection, statusCode: 400, reason: "Bad Request",
