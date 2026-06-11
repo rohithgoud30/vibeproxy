@@ -77,7 +77,10 @@ fi
 echo -e "${GREEN}✅ cli-proxy-api-plus bundled: $(ls -lh "$APP_DIR/Contents/Resources/cli-proxy-api-plus" | awk '{print $5}')${NC}"
 
 CLOUDFLARED_BUNDLED="$APP_DIR/Contents/Resources/cloudflared"
-CLOUDFLARED_TARGET_ARCH="${TARGET_ARCH:-arm64}"
+# Compare against the arch the app was ACTUALLY built as (read from the
+# compiled executable), not an assumed default — when TARGET_ARCH is unset the
+# swift build is host-native, which may be x86_64.
+CLOUDFLARED_TARGET_ARCH="$(lipo -archs "$APP_DIR/Contents/MacOS/CLIProxyMenuBar" 2>/dev/null || echo "${TARGET_ARCH:-$(uname -m)}")"
 if [ ! -f "$CLOUDFLARED_BUNDLED" ]; then
     echo -e "${YELLOW}⚠️ WARNING: cloudflared binary not found in bundle!${NC}"
     echo "Looking for cloudflared in source:"

@@ -37,9 +37,10 @@ echo -e "${BLUE}🧹 Cleaning previous builds...${NC}"
 rm -rf VibeProxy.app "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-# Build the app (inject the clean base version into Info.plist)
-echo -e "${BLUE}🔨 Building VibeProxy (app version ${APP_VERSION_CLEAN})...${NC}"
-APP_VERSION="$APP_VERSION_CLEAN" ./create-app-bundle.sh
+# Build the app (inject the clean base version into Info.plist). Pass
+# TARGET_ARCH so the build arch matches the arm64 artifact names/notes.
+echo -e "${BLUE}🔨 Building VibeProxy (app version ${APP_VERSION_CLEAN}, arch ${ARCH})...${NC}"
+APP_VERSION="$APP_VERSION_CLEAN" TARGET_ARCH="$ARCH" ./create-app-bundle.sh
 
 if [ ! -d "VibeProxy.app" ]; then
     echo -e "${RED}❌ Build failed - VibeProxy.app not found${NC}"
