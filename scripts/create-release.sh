@@ -20,6 +20,13 @@ VERSION_NUM="${VERSION#v}"
 # The bundle's CFBundleShortVersionString must be a clean numeric version, so
 # strip any -rg30.<date>.<n> suffix; the full label lives on the tag/notes.
 APP_VERSION_CLEAN="${VERSION_NUM%%-*}"
+# "dev" is not a valid CFBundleShortVersionString; fall back to the latest
+# tag's numeric base (or 0.0.0) so the bundle always carries valid version
+# metadata for macOS / Sparkle.
+if [ "$APP_VERSION_CLEAN" = "dev" ]; then
+    FALLBACK_VER="$(git -C "$PROJECT_DIR" describe --tags --abbrev=0 2>/dev/null | sed -E 's/^v//; s/-.*$//')"
+    APP_VERSION_CLEAN="${FALLBACK_VER:-0.0.0}"
+fi
 ARCH="arm64"
 DIST_DIR="$PROJECT_DIR/dist"
 # Derive the repo slug from the origin remote so the script is correct on any
