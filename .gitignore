@@ -31,3 +31,6 @@ src/Sources/Resources/AppIcon.iconset/
 *.log
 test-notarization.sh
 .vscode/settings.json
+
+# Release artifacts
+dist/
