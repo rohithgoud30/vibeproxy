@@ -22,6 +22,12 @@ VERSION_NUM="${VERSION#v}"
 APP_VERSION_CLEAN="${VERSION_NUM%%-*}"
 ARCH="arm64"
 DIST_DIR="$PROJECT_DIR/dist"
+# Derive the repo slug from the origin remote so the script is correct on any
+# fork, rather than hardcoding one owner.
+REPO_SLUG="$(cd "$PROJECT_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null \
+    || git -C "$PROJECT_DIR" config --get remote.origin.url \
+       | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
+REPO_SLUG="${REPO_SLUG:-rohithgoud30/vibeproxy}"
 
 echo -e "${BLUE}📦 Creating VibeProxy Release ${VERSION} (${ARCH})${NC}"
 echo ""
@@ -65,7 +71,7 @@ NOTES="$DIST_DIR/release-notes.md"
 cat > "$NOTES" <<EOF
 ## VibeProxy ${VERSION_NUM} (Cursor Relay build)
 
-Personal fork build with the built-in **Codex Proxy for Cursor** (authenticated public relay + bundled cloudflared). See [CURSOR_SETUP.md](https://github.com/rohithgoud30/vibeproxy/blob/main/CURSOR_SETUP.md).
+Personal fork build with the built-in **Codex Proxy for Cursor** (authenticated public relay + bundled cloudflared). See [CURSOR_SETUP.md](https://github.com/${REPO_SLUG}/blob/${VERSION}/CURSOR_SETUP.md).
 
 ### Downloads
 
@@ -95,7 +101,7 @@ echo -e "${GREEN}✅ Release artifacts created in dist/:${NC}"
 echo ""
 echo -e "${YELLOW}Publish to your fork:${NC}"
 echo "  gh release create ${VERSION} \\"
-echo "    --repo rohithgoud30/vibeproxy \\"
+echo "    --repo ${REPO_SLUG} \\"
 echo "    --title \"${VERSION}\" \\"
 echo "    --notes-file dist/release-notes.md \\"
 echo "    dist/${DMG_NAME} dist/${DMG_NAME}.sha256 dist/${ZIP_NAME} dist/${ZIP_NAME}.sha256"
