@@ -110,9 +110,12 @@ class TunnelManager {
             try process?.run()
             isRunning = true
             
-            // Timeout if URL not found in 10 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+            // Timeout if URL not found in 10 seconds. Terminate the slow
+            // cloudflared so it can't print a URL and fire the callback later
+            // against a relay that has since been torn down.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
                 if !urlFound {
+                    self?.stop()
                     completion(false, nil)
                 }
             }
