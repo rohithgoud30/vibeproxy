@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     weak var settingsWindow: NSWindow?
     var serverManager: ServerManager!
     var thinkingProxy: ThinkingProxy!
+    var cursorRelayManager: CursorRelayManager!
     private let notificationCenter = UNUserNotificationCenter.current()
     private var notificationPermissionGranted = false
     private let updaterController: SPUStandardUpdaterController
@@ -34,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         // Initialize managers
         serverManager = ServerManager()
         thinkingProxy = ThinkingProxy()
+        cursorRelayManager = CursorRelayManager()
 
         // Sync Vercel AI Gateway config from ServerManager to ThinkingProxy
         syncVercelConfig()
@@ -177,6 +179,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
 
         menu.addItem(NSMenuItem.separator())
 
+        // Codex Proxy for Cursor (authenticated public relay)
+        let cursorHeaderItem = NSMenuItem(title: "Codex Proxy for Cursor: Off", action: nil, keyEquivalent: "")
+        cursorHeaderItem.tag = 110
+        menu.addItem(cursorHeaderItem)
+
+        let cursorToggleItem = NSMenuItem(title: "Turn On Cursor Proxy", action: #selector(toggleCursorRelay), keyEquivalent: "")
+        cursorToggleItem.tag = 111
+        menu.addItem(cursorToggleItem)
+
+        let copyCursorURLItem = NSMenuItem(title: "Copy Cursor URL", action: #selector(copyCursorURL), keyEquivalent: "")
+        copyCursorURLItem.isEnabled = false
+        copyCursorURLItem.tag = 112
+        menu.addItem(copyCursorURLItem)
+
+        let copyCursorKeyItem = NSMenuItem(title: "Copy API Key", action: #selector(copyCursorAPIKey), keyEquivalent: "")
+        copyCursorKeyItem.tag = 113
+        menu.addItem(copyCursorKeyItem)
+
+        let regenerateCursorKeyItem = NSMenuItem(title: "Regenerate API Key", action: #selector(regenerateCursorAPIKey), keyEquivalent: "")
+        regenerateCursorKeyItem.tag = 114
+        menu.addItem(regenerateCursorKeyItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Check for Updates
         let checkForUpdatesItem = NSMenuItem(title: "Check for Updates...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "u")
         checkForUpdatesItem.target = updaterController
@@ -250,6 +276,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
                         self?.updateMenuBarStatus()
                         // User always connects to 8317 (thinking proxy)
                         self?.showNotification(title: "Server Started", body: "VibeProxy is now running")
+                        // Bring the Cursor relay back up if the user left it on
+                        if self?.cursorRelayManager.isEnabled == true {
+                            self?.startCursorRelay(announceFailure: false)
+                        }
                     } else {
                         // Backend failed - stop the proxy to keep state consistent
                         self?.thinkingProxy.stop()
@@ -278,12 +308,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     }
 
     func stopServer() {
+        // The relay is useless without the local server behind it
+        cursorRelayManager.stop()
+
         // Stop the thinking proxy first to stop accepting new requests
         thinkingProxy.stop()
-        
+
         // Then stop CLIProxyAPI backend
         serverManager.stop()
-        
+
         updateMenuBarStatus()
     }
 
@@ -298,6 +331,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         if let url = URL(string: "http://localhost:8318/management.html") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    // MARK: - Codex Proxy for Cursor
+
+    @objc func toggleCursorRelay() {
+        if cursorRelayManager.isRunning || cursorRelayManager.isStarting {
+            cursorRelayManager.isEnabled = false
+            cursorRelayManager.stop()
+            updateMenuBarStatus()
+            showNotification(title: "Cursor Proxy Stopped", body: "The public relay and tunnel are off")
+        } else {
+            cursorRelayManager.isEnabled = true
+            startCursorRelay(announceFailure: true)
+        }
+    }
+
+    private func startCursorRelay(announceFailure: Bool) {
+        cursorRelayManager.start { [weak self] success, baseURL in
+            if success, let baseURL = baseURL {
+                // The quick-tunnel URL changes on every start, so hand it over right away
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(baseURL, forType: .string)
+                self?.showNotification(title: "Cursor Proxy Running", body: "Base URL copied: \(baseURL)")
+            } else if announceFailure {
+                self?.showNotification(title: "Cursor Proxy Failed", body: "Could not start the tunnel (is cloudflared installed?)")
+            }
+            self?.updateMenuBarStatus()
+        }
+        updateMenuBarStatus()
+    }
+
+    @objc func copyCursorURL() {
+        guard let baseURL = cursorRelayManager.cursorBaseURL else {
+            showNotification(title: "Cursor Proxy Is Off", body: "Turn on the Cursor proxy to get a URL")
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(baseURL, forType: .string)
+        showNotification(title: "Copied", body: "Cursor base URL copied to clipboard")
+    }
+
+    @objc func copyCursorAPIKey() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(cursorRelayManager.apiKey, forType: .string)
+        showNotification(title: "Copied", body: "Cursor proxy API key copied to clipboard")
+    }
+
+    @objc func regenerateCursorAPIKey() {
+        let key = cursorRelayManager.regenerateAPIKey()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(key, forType: .string)
+        showNotification(title: "New API Key", body: "Generated and copied — update it in Cursor")
     }
 
     @objc func handleAuthDirectoryChanged() {
@@ -327,6 +416,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
 
         if let dashboardItem = menu.item(withTag: 103) {
             dashboardItem.isEnabled = serverManager.isRunning
+        }
+
+        // Cursor relay section
+        if let cursorHeaderItem = menu.item(withTag: 110) {
+            let status: String
+            if cursorRelayManager.isRunning {
+                status = "On"
+            } else if cursorRelayManager.isStarting {
+                status = "Starting…"
+            } else {
+                status = "Off"
+            }
+            cursorHeaderItem.title = "Codex Proxy for Cursor: \(status)"
+        }
+
+        if let cursorToggleItem = menu.item(withTag: 111) {
+            let active = cursorRelayManager.isRunning || cursorRelayManager.isStarting
+            cursorToggleItem.title = active ? "Turn Off Cursor Proxy" : "Turn On Cursor Proxy"
+        }
+
+        if let copyCursorURLItem = menu.item(withTag: 112) {
+            copyCursorURLItem.isEnabled = cursorRelayManager.cursorBaseURL != nil
         }
 
         // Update icon based on server status
@@ -367,6 +478,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
 
     @objc func quit() {
         // Stop server and wait for cleanup before quitting
+        cursorRelayManager.stop()
         if serverManager.isRunning {
             thinkingProxy.stop()
             serverManager.stop()
@@ -384,6 +496,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         authFileMonitor?.cancel()
         authFileMonitor = nil
         // Final cleanup - stop server if still running
+        cursorRelayManager.stop()
         if serverManager.isRunning {
             thinkingProxy.stop()
             serverManager.stop()
@@ -392,6 +505,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // If server is running, stop it first
+        cursorRelayManager.stop()
         if serverManager.isRunning {
             thinkingProxy.stop()
             serverManager.stop()
