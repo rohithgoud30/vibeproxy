@@ -46,12 +46,15 @@ struct CursorRelayAliasMapper {
             return data
         }
 
-        let existingIDs = Set(models.compactMap { $0["id"] as? String })
-        for model in existingIDs where shouldAdvertiseAliases(for: model) {
-            for alias in aliases(for: model) where !existingIDs.contains(alias) {
-                guard var source = models.first(where: { ($0["id"] as? String) == model }) else { continue }
-                source["id"] = alias
-                models.append(source)
+        let sourceModels = models
+        var advertisedIDs = Set(models.compactMap { $0["id"] as? String })
+        for source in sourceModels {
+            guard let model = source["id"] as? String, shouldAdvertiseAliases(for: model) else { continue }
+            for alias in aliases(for: model) where !advertisedIDs.contains(alias) {
+                var aliasModel = source
+                aliasModel["id"] = alias
+                models.append(aliasModel)
+                advertisedIDs.insert(alias)
             }
         }
 
