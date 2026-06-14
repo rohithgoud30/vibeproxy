@@ -48,8 +48,10 @@ Supported effort aliases follow each model's API support:
 
 | Model | Supported effort aliases |
 |---|---|
-| `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.2` | `none`, `low`, `medium`, `high`, `xhigh` |
-| `gpt-5.3-codex` | `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.2`, other `gpt-5.x` frontier/mini/nano models | `none`, `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.5-pro`, `gpt-5.4-pro`, `gpt-5.2-pro` | `medium`, `high`, `xhigh` |
+| `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.1-codex-max` | `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5-codex` | `low`, `medium`, `high` |
 | `gpt-5.1` | `none`, `low`, `medium`, `high` |
 | `gpt-5` | `minimal`, `low`, `medium`, `high` |
 | `gpt-5.3-codex-spark` | `fast` suffix only |
