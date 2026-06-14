@@ -6,17 +6,17 @@ import Foundation
 /// "-xhigh-fast" variants. The relay rewrites them to the real upstream model
 /// and adds the matching reasoning effort before forwarding.
 struct CursorRelayAliasMapper {
-    private static let aliases: [String: (upstreamModel: String, reasoningEffort: String?)] = [
-        "gpt-5.5-extra": ("gpt-5.5", "xhigh"),
-        "gpt-5.5-fast": ("gpt-5.5", nil),
-        "gpt-5.5-xhigh-fast": ("gpt-5.5", "xhigh"),
-        "gpt-5.4-extra": ("gpt-5.4", "xhigh"),
-        "gpt-5.4-fast": ("gpt-5.4", nil),
-        "gpt-5.4-xhigh-fast": ("gpt-5.4", "xhigh"),
-        "gpt-5.4-mini-extra": ("gpt-5.4-mini", "xhigh"),
-        "gpt-5.4-mini-fast": ("gpt-5.4-mini", nil),
-        "gpt-5.4-mini-xhigh-fast": ("gpt-5.4-mini", "xhigh")
+    private static let modelEfforts: [String: [String]] = [
+        "gpt-5.5": ["none", "low", "medium", "high", "xhigh"],
+        "gpt-5.4": ["none", "low", "medium", "high", "xhigh"],
+        "gpt-5.4-mini": ["none", "low", "medium", "high", "xhigh"],
+        "gpt-5.3-codex": ["low", "medium", "high", "xhigh"],
+        "gpt-5.2": ["none", "low", "medium", "high", "xhigh"],
+        "gpt-5.1": ["none", "low", "medium", "high"],
+        "gpt-5": ["minimal", "low", "medium", "high"]
     ]
+    private static let fastOnlyModels = ["gpt-5.3-codex-spark"]
+    private static let aliases = makeAliases()
 
     /// Rewrites a chat-completions request body if it targets an alias model.
     /// Alias requests get the requested `reasoning_effort` injected.
@@ -57,5 +57,25 @@ struct CursorRelayAliasMapper {
 
         json["data"] = models
         return (try? JSONSerialization.data(withJSONObject: json)) ?? data
+    }
+
+    private static func makeAliases() -> [String: (upstreamModel: String, reasoningEffort: String?)] {
+        var aliases: [String: (upstreamModel: String, reasoningEffort: String?)] = [:]
+
+        for (model, efforts) in modelEfforts {
+            aliases["\(model)-fast"] = (model, nil)
+            for effort in efforts {
+                aliases["\(model)-\(effort)-fast"] = (model, effort)
+            }
+            if efforts.contains("xhigh") {
+                aliases["\(model)-extra"] = (model, "xhigh")
+            }
+        }
+
+        for model in fastOnlyModels {
+            aliases["\(model)-fast"] = (model, nil)
+        }
+
+        return aliases
     }
 }
