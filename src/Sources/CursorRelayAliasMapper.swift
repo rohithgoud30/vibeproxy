@@ -109,28 +109,28 @@ struct CursorRelayAliasMapper {
         if model.contains("-spark") {
             return []
         }
-        if model.hasPrefix("gpt-5.5-pro") || model.hasPrefix("gpt-5.4-pro") || model.hasPrefix("gpt-5.2-pro") {
+        if matchesModelFamily(model, "gpt-5.5-pro") || matchesModelFamily(model, "gpt-5.4-pro") || matchesModelFamily(model, "gpt-5.2-pro") {
             return proEfforts
         }
-        if model.hasPrefix("gpt-5-pro") {
+        if matchesModelFamily(model, "gpt-5-pro") {
             return highOnlyEfforts
         }
-        if model.hasPrefix("gpt-5.3-codex") {
+        if matchesModelFamily(model, "gpt-5.3-codex") {
             return codexEfforts
         }
-        if model.hasPrefix("gpt-5.2-codex") {
+        if matchesModelFamily(model, "gpt-5.2-codex") {
             return codexEfforts
         }
-        if model.hasPrefix("gpt-5.1-codex-max") {
+        if matchesModelFamily(model, "gpt-5.1-codex-max") {
             return codexEfforts
         }
-        if model.hasPrefix("gpt-5.1-codex") {
+        if matchesModelFamily(model, "gpt-5.1-codex") {
             return olderCodexEfforts
         }
-        if model.hasPrefix("gpt-5-codex") {
+        if matchesModelFamily(model, "gpt-5-codex") {
             return olderCodexEfforts
         }
-        if model.hasPrefix("gpt-5.1") {
+        if matchesModelFamily(model, "gpt-5.1") {
             return ["none", "low", "medium", "high"]
         }
         if model == "gpt-5" || model.hasPrefix("gpt-5-") {
@@ -148,5 +148,9 @@ struct CursorRelayAliasMapper {
 
     private static func isGPT5Model(_ model: String) -> Bool {
         model == "gpt-5" || model.hasPrefix("gpt-5.") || model.hasPrefix("gpt-5-")
+    }
+
+    private static func matchesModelFamily(_ model: String, _ family: String) -> Bool {
+        model == family || model.hasPrefix("\(family)-")
     }
 }
