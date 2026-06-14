@@ -80,7 +80,7 @@ struct CursorRelayAliasMapper {
             return (effortAlias.baseModel, effortAlias.effort)
         }
 
-        return isGPT5Model(withoutFast) ? (withoutFast, nil) : nil
+        return shouldStripFastSuffix(for: withoutFast) ? (withoutFast, nil) : nil
     }
 
     private static func aliases(for model: String) -> [String] {
@@ -106,6 +106,9 @@ struct CursorRelayAliasMapper {
     }
 
     private static func supportedEfforts(for model: String) -> [String] {
+        if isChatModel(model) {
+            return []
+        }
         if model.contains("-spark") {
             return []
         }
@@ -143,11 +146,19 @@ struct CursorRelayAliasMapper {
     }
 
     private static func shouldAdvertiseAliases(for model: String) -> Bool {
-        isGPT5Model(model) && !model.hasSuffix("-fast") && !model.hasSuffix("-extra")
+        shouldStripFastSuffix(for: model) && !model.hasSuffix("-fast") && !model.hasSuffix("-extra")
     }
 
     private static func isGPT5Model(_ model: String) -> Bool {
         model == "gpt-5" || model.hasPrefix("gpt-5.") || model.hasPrefix("gpt-5-")
+    }
+
+    private static func shouldStripFastSuffix(for model: String) -> Bool {
+        isGPT5Model(model) && !isChatModel(model)
+    }
+
+    private static func isChatModel(_ model: String) -> Bool {
+        model.contains("-chat-") || model.hasSuffix("-chat")
     }
 
     private static func matchesModelFamily(_ model: String, _ family: String) -> Bool {
