@@ -22,6 +22,22 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         XCTAssertEqual(result?["reasoning_effort"] as? String, "xhigh")
     }
 
+    func testRewriteXHighFastAlias() {
+        let input = Data(#"{"model":"gpt-5.4-xhigh-fast","messages":[]}"#.utf8)
+        let result = json(from: CursorRelayAliasMapper.rewriteChatBody(input))
+
+        XCTAssertEqual(result?["model"] as? String, "gpt-5.4")
+        XCTAssertEqual(result?["reasoning_effort"] as? String, "xhigh")
+    }
+
+    func testRewriteFastAliasStripsClientSuffixOnly() {
+        let input = Data(#"{"model":"gpt-5.4-fast","messages":[]}"#.utf8)
+        let result = json(from: CursorRelayAliasMapper.rewriteChatBody(input))
+
+        XCTAssertEqual(result?["model"] as? String, "gpt-5.4")
+        XCTAssertNil(result?["reasoning_effort"])
+    }
+
     func testNonAliasModelPassesThroughUnchanged() {
         let input = Data(#"{"model":"gpt-5.5","messages":[]}"#.utf8)
         let output = CursorRelayAliasMapper.rewriteChatBody(input)
@@ -41,7 +57,10 @@ final class CursorRelayAliasMapperTests: XCTestCase {
 
         XCTAssertTrue(ids.contains("gpt-5.5"))
         XCTAssertTrue(ids.contains("gpt-5.5-extra"))
+        XCTAssertTrue(ids.contains("gpt-5.5-xhigh-fast"))
         XCTAssertTrue(ids.contains("gpt-5.4-extra"))
+        XCTAssertTrue(ids.contains("gpt-5.4-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.4-xhigh-fast"))
         XCTAssertFalse(ids.contains("gpt-5.4-mini-extra"), "alias should only be added when its base model exists")
     }
 

@@ -41,8 +41,10 @@ Use any model your VibeProxy serves, e.g. `gpt-5.5`, or an alias:
 | `gpt-5.5-extra` | `gpt-5.5` | `reasoning_effort: xhigh` |
 | `gpt-5.4-extra` | `gpt-5.4` | `reasoning_effort: xhigh` |
 | `gpt-5.4-mini-extra` | `gpt-5.4-mini` | `reasoning_effort: xhigh` |
+| `gpt-5.4-xhigh-fast` | `gpt-5.4` | strips Cursor's `fast` suffix and sets `reasoning_effort: xhigh` |
+| `gpt-5.4-fast` | `gpt-5.4` | strips Cursor's `fast` suffix and uses the model default effort |
 
-Clients that can set `reasoning_effort` themselves don't need aliases — the relay passes the field through unchanged for non-alias models (`gpt-5.5` accepts `low`, `medium`, `high`, `xhigh`).
+Clients that can set `reasoning_effort` themselves don't need aliases — the relay passes the field through unchanged for non-alias models (`gpt-5.5` accepts `low`, `medium`, `high`, `xhigh`). `fast` is not sent to OpenAI as an API parameter; it is a Cursor/client suffix that the relay strips before forwarding.
 
 ## Menu reference
 
