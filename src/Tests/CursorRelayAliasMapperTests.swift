@@ -98,7 +98,11 @@ final class CursorRelayAliasMapperTests: XCTestCase {
             #"{"model":"gpt-5.5-pro-none-fast","messages":[]}"#,
             #"{"model":"gpt-5.4-pro-none-fast","messages":[]}"#,
             #"{"model":"gpt-5-pro-medium-fast","messages":[]}"#,
-            #"{"model":"gpt-5.3-codex-spark-xhigh-fast","messages":[]}"#
+            #"{"model":"gpt-5.3-codex-spark-xhigh-fast","messages":[]}"#,
+            #"{"model":"gpt-5-chat-latest-fast","messages":[]}"#,
+            #"{"model":"gpt-5-chat-latest-xhigh-fast","messages":[]}"#,
+            #"{"model":"gpt-5.2-chat-latest-fast","messages":[]}"#,
+            #"{"model":"gpt-5.2-chat-latest-xhigh-fast","messages":[]}"#
         ]
 
         for input in inputs {
@@ -113,7 +117,7 @@ final class CursorRelayAliasMapperTests: XCTestCase {
     }
 
     func testInjectAliasesAddsExtraVariants() {
-        let input = Data(#"{"object":"list","data":[{"id":"gpt-5.5","object":"model"},{"id":"gpt-5.5-pro","object":"model"},{"id":"gpt-5.4","object":"model"},{"id":"gpt-5.4-nano","object":"model"},{"id":"gpt-5.1","object":"model"},{"id":"gpt-5.1-codex-max","object":"model"},{"id":"gpt-5.1-codex-mini","object":"model"},{"id":"gpt-5.2-codex","object":"model"},{"id":"gpt-5.2-pro","object":"model"},{"id":"gpt-5.3-codex","object":"model"},{"id":"gpt-5.3-codex-spark","object":"model"},{"id":"gpt-5.6-preview","object":"model"},{"id":"gpt-5.10-preview","object":"model"}]}"#.utf8)
+        let input = Data(#"{"object":"list","data":[{"id":"gpt-5.5","object":"model"},{"id":"gpt-5.5-pro","object":"model"},{"id":"gpt-5.4","object":"model"},{"id":"gpt-5.4-nano","object":"model"},{"id":"gpt-5.1","object":"model"},{"id":"gpt-5.1-codex-max","object":"model"},{"id":"gpt-5.1-codex-mini","object":"model"},{"id":"gpt-5.2-codex","object":"model"},{"id":"gpt-5.2-pro","object":"model"},{"id":"gpt-5.3-codex","object":"model"},{"id":"gpt-5.3-codex-spark","object":"model"},{"id":"gpt-5.6-preview","object":"model"},{"id":"gpt-5.10-preview","object":"model"},{"id":"gpt-5-chat-latest","object":"model"},{"id":"gpt-5.2-chat-latest","object":"model"}]}"#.utf8)
         let result = json(from: CursorRelayAliasMapper.injectAliases(intoModelsResponse: input))
         let ids = Set((result?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? [])
 
@@ -143,6 +147,10 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         XCTAssertFalse(ids.contains("gpt-5.5-pro-none-fast"), "alias should only be added when the model supports that effort")
         XCTAssertFalse(ids.contains("gpt-5.2-pro-none-fast"), "alias should only be added when the model supports that effort")
         XCTAssertFalse(ids.contains("gpt-5.3-codex-spark-xhigh-fast"), "spark only gets the fast suffix stripped")
+        XCTAssertFalse(ids.contains("gpt-5-chat-latest-fast"), "chat models should not get Cursor relay aliases")
+        XCTAssertFalse(ids.contains("gpt-5-chat-latest-xhigh-fast"), "chat models should not get reasoning aliases")
+        XCTAssertFalse(ids.contains("gpt-5.2-chat-latest-fast"), "chat models should not get Cursor relay aliases")
+        XCTAssertFalse(ids.contains("gpt-5.2-chat-latest-xhigh-fast"), "chat models should not get reasoning aliases")
         XCTAssertFalse(ids.contains("gpt-5.4-mini-extra"), "alias should only be added when its base model exists")
     }
 
