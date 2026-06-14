@@ -6,15 +6,16 @@ import Foundation
 /// "-xhigh-fast" variants. The relay rewrites them to the real upstream model
 /// and adds the matching reasoning effort before forwarding.
 struct CursorRelayAliasMapper {
-    private struct AliasTarget {
-        let upstreamModel: String
-        let reasoningEffort: String?
-    }
-
-    private static let explicitAliases: [String: AliasTarget] = [
-        "gpt-5.5-extra": AliasTarget(upstreamModel: "gpt-5.5", reasoningEffort: "xhigh"),
-        "gpt-5.4-extra": AliasTarget(upstreamModel: "gpt-5.4", reasoningEffort: "xhigh"),
-        "gpt-5.4-mini-extra": AliasTarget(upstreamModel: "gpt-5.4-mini", reasoningEffort: "xhigh")
+    private static let aliases: [String: (upstreamModel: String, reasoningEffort: String?)] = [
+        "gpt-5.5-extra": ("gpt-5.5", "xhigh"),
+        "gpt-5.5-fast": ("gpt-5.5", nil),
+        "gpt-5.5-xhigh-fast": ("gpt-5.5", "xhigh"),
+        "gpt-5.4-extra": ("gpt-5.4", "xhigh"),
+        "gpt-5.4-fast": ("gpt-5.4", nil),
+        "gpt-5.4-xhigh-fast": ("gpt-5.4", "xhigh"),
+        "gpt-5.4-mini-extra": ("gpt-5.4-mini", "xhigh"),
+        "gpt-5.4-mini-fast": ("gpt-5.4-mini", nil),
+        "gpt-5.4-mini-xhigh-fast": ("gpt-5.4-mini", "xhigh")
     ]
 
     /// Rewrites a chat-completions request body if it targets an alias model.
@@ -23,7 +24,7 @@ struct CursorRelayAliasMapper {
         guard !body.isEmpty,
               var json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let model = json["model"] as? String,
-              let target = aliasTarget(for: model) else {
+              let target = aliases[model] else {
             return body
         }
 
@@ -47,64 +48,14 @@ struct CursorRelayAliasMapper {
             return data
         }
 
-        var existingIDs = Set(models.compactMap { $0["id"] as? String })
-        for (alias, real) in listedAliases(existingIDs: existingIDs) where !existingIDs.contains(alias) {
-            guard var source = models.first(where: { ($0["id"] as? String) == real }) else { continue }
+        let existingIDs = Set(models.compactMap { $0["id"] as? String })
+        for (alias, target) in aliases where existingIDs.contains(target.upstreamModel) && !existingIDs.contains(alias) {
+            guard var source = models.first(where: { ($0["id"] as? String) == target.upstreamModel }) else { continue }
             source["id"] = alias
             models.append(source)
-            existingIDs.insert(alias)
         }
 
         json["data"] = models
         return (try? JSONSerialization.data(withJSONObject: json)) ?? data
-    }
-
-    private static func aliasTarget(for model: String) -> AliasTarget? {
-        if let target = explicitAliases[model] {
-            return target
-        }
-
-        var normalized = model
-        let hadFastSuffix = normalized.hasSuffix("-fast")
-        if hadFastSuffix {
-            normalized.removeLast("-fast".count)
-        }
-
-        if let parsed = parseEffortSuffix(from: normalized) {
-            return AliasTarget(upstreamModel: parsed.baseModel, reasoningEffort: parsed.effort)
-        }
-
-        if hadFastSuffix, isGPT5Model(normalized) {
-            return AliasTarget(upstreamModel: normalized, reasoningEffort: nil)
-        }
-
-        return nil
-    }
-
-    private static func parseEffortSuffix(from model: String) -> (baseModel: String, effort: String)? {
-        for effort in ["xhigh", "high", "medium", "low", "minimal", "none"] {
-            let suffix = "-\(effort)"
-            guard model.hasSuffix(suffix) else { continue }
-            var baseModel = model
-            baseModel.removeLast(suffix.count)
-            guard isGPT5Model(baseModel) else { continue }
-            return (baseModel, effort)
-        }
-        return nil
-    }
-
-    private static func isGPT5Model(_ model: String) -> Bool {
-        model.hasPrefix("gpt-5.")
-    }
-
-    private static func listedAliases(existingIDs: Set<String>) -> [(alias: String, real: String)] {
-        var aliases = explicitAliases.map { (alias: $0.key, real: $0.value.upstreamModel) }
-
-        for model in existingIDs where isGPT5Model(model) {
-            aliases.append((alias: "\(model)-fast", real: model))
-            aliases.append((alias: "\(model)-xhigh-fast", real: model))
-        }
-
-        return aliases
     }
 }
