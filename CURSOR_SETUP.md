@@ -41,8 +41,10 @@ Use any model your VibeProxy serves, e.g. `gpt-5.5`, or an alias:
 | `gpt-5.5-extra` | `gpt-5.5` | `reasoning_effort: xhigh` |
 | `gpt-5.4-extra` | `gpt-5.4` | `reasoning_effort: xhigh` |
 | `gpt-5.4-mini-extra` | `gpt-5.4-mini` | `reasoning_effort: xhigh` |
+| `<model>-<effort>` | `<model>` | sets `reasoning_effort` |
 | `<model>-fast` | `<model>` | strips Cursor's `fast` suffix and uses the model default effort |
 | `<model>-<effort>-fast` | `<model>` | strips Cursor's `fast` suffix and sets `reasoning_effort` |
+| `<model>-extra-high-fast` | `<model>` | handles Cursor's composed MAX/fast suffix as `reasoning_effort: xhigh` |
 
 Supported effort aliases follow each model's API support:
 
