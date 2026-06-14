@@ -63,17 +63,22 @@ struct CursorRelayAliasMapper {
     }
 
     private static func aliasTarget(for model: String) -> AliasTarget? {
-        if model.hasSuffix("-extra") {
-            var baseModel = model
-            baseModel.removeLast("-extra".count)
-            guard supportedEfforts(for: baseModel).contains("xhigh") else { return nil }
-            return (baseModel, "xhigh")
+        if let target = extraAliasTarget(for: model) {
+            return target
+        }
+
+        if let target = effortAliasTarget(for: model) {
+            return target
         }
 
         guard model.hasSuffix("-fast") else { return nil }
 
         var withoutFast = model
         withoutFast.removeLast("-fast".count)
+
+        if let target = extraAliasTarget(for: withoutFast) {
+            return target
+        }
 
         if let effortAlias = parseEffortAlias(withoutFast) {
             guard supportedEfforts(for: effortAlias.baseModel).contains(effortAlias.effort) else { return nil }
@@ -86,11 +91,45 @@ struct CursorRelayAliasMapper {
     private static func aliases(for model: String) -> [String] {
         var aliases = ["\(model)-fast"]
         let efforts = supportedEfforts(for: model)
-        aliases += efforts.map { "\(model)-\($0)-fast" }
+        aliases += efforts.flatMap { ["\(model)-\($0)", "\(model)-\($0)-fast"] }
         if efforts.contains("xhigh") {
             aliases.append("\(model)-extra")
+            aliases.append("\(model)-extra-fast")
+            aliases.append("\(model)-extra-high")
+            aliases.append("\(model)-extra-high-fast")
         }
         return aliases
+    }
+
+    private static func extraAliasTarget(for model: String) -> AliasTarget? {
+        if model.hasSuffix("-extra") {
+            var baseModel = model
+            baseModel.removeLast("-extra".count)
+            return maxEffortTarget(for: baseModel)
+        }
+
+        for effort in knownEfforts {
+            let suffix = "-extra-\(effort)"
+            guard model.hasSuffix(suffix) else { continue }
+            var baseModel = model
+            baseModel.removeLast(suffix.count)
+            return maxEffortTarget(for: baseModel)
+        }
+
+        return nil
+    }
+
+    private static func maxEffortTarget(for baseModel: String) -> AliasTarget? {
+        guard supportedEfforts(for: baseModel).contains("xhigh") else { return nil }
+        return (baseModel, "xhigh")
+    }
+
+    private static func effortAliasTarget(for model: String) -> AliasTarget? {
+        guard let effortAlias = parseEffortAlias(model),
+              supportedEfforts(for: effortAlias.baseModel).contains(effortAlias.effort) else {
+            return nil
+        }
+        return (effortAlias.baseModel, effortAlias.effort)
     }
 
     private static func parseEffortAlias(_ model: String) -> (baseModel: String, effort: String)? {

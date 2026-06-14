@@ -22,6 +22,24 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         XCTAssertEqual(result?["reasoning_effort"] as? String, "xhigh")
     }
 
+    func testRewriteExtraAliasComposedWithCursorEffortSuffix() {
+        let cases = [
+            "gpt-5.5-extra-fast",
+            "gpt-5.5-extra-high",
+            "gpt-5.5-extra-high-fast",
+            "gpt-5.4-mini-extra-high-fast"
+        ]
+
+        for alias in cases {
+            let input = Data(#"{"model":"\#(alias)","messages":[]}"#.utf8)
+            let result = json(from: CursorRelayAliasMapper.rewriteChatBody(input))
+
+            let expectedModel = alias.hasPrefix("gpt-5.4-mini") ? "gpt-5.4-mini" : "gpt-5.5"
+            XCTAssertEqual(result?["model"] as? String, expectedModel, alias)
+            XCTAssertEqual(result?["reasoning_effort"] as? String, "xhigh", alias)
+        }
+    }
+
     func testRewriteXHighFastAlias() {
         let input = Data(#"{"model":"gpt-5.4-xhigh-fast","messages":[]}"#.utf8)
         let result = json(from: CursorRelayAliasMapper.rewriteChatBody(input))
@@ -55,6 +73,23 @@ final class CursorRelayAliasMapperTests: XCTestCase {
             ("gpt-5.6-preview-xhigh-fast", "gpt-5.6-preview", "xhigh"),
             ("gpt-5.10-preview-xhigh-fast", "gpt-5.10-preview", "xhigh"),
             ("gpt-5-minimal-fast", "gpt-5", "minimal")
+        ]
+
+        for testCase in cases {
+            let input = Data(#"{"model":"\#(testCase.alias)","messages":[]}"#.utf8)
+            let result = json(from: CursorRelayAliasMapper.rewriteChatBody(input))
+
+            XCTAssertEqual(result?["model"] as? String, testCase.model, testCase.alias)
+            XCTAssertEqual(result?["reasoning_effort"] as? String, testCase.effort, testCase.alias)
+        }
+    }
+
+    func testRewriteSupportedEffortAliasesWithoutFastSuffix() {
+        let cases: [(alias: String, model: String, effort: String)] = [
+            ("gpt-5.5-none", "gpt-5.5", "none"),
+            ("gpt-5.5-medium", "gpt-5.5", "medium"),
+            ("gpt-5.4-xhigh", "gpt-5.4", "xhigh"),
+            ("gpt-5-minimal", "gpt-5", "minimal")
         ]
 
         for testCase in cases {
@@ -122,7 +157,11 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         let ids = Set((result?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? [])
 
         XCTAssertTrue(ids.contains("gpt-5.5"))
+        XCTAssertTrue(ids.contains("gpt-5.5-medium"))
         XCTAssertTrue(ids.contains("gpt-5.5-extra"))
+        XCTAssertTrue(ids.contains("gpt-5.5-extra-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.5-extra-high"))
+        XCTAssertTrue(ids.contains("gpt-5.5-extra-high-fast"))
         XCTAssertTrue(ids.contains("gpt-5.5-low-fast"))
         XCTAssertTrue(ids.contains("gpt-5.5-xhigh-fast"))
         XCTAssertTrue(ids.contains("gpt-5.5-pro-high-fast"))
