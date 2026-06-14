@@ -39,10 +39,20 @@ final class CursorRelayAliasMapperTests: XCTestCase {
             ("gpt-5.5-xhigh-fast", "gpt-5.5", "xhigh"),
             ("gpt-5.4-none-fast", "gpt-5.4", "none"),
             ("gpt-5.4-mini-high-fast", "gpt-5.4-mini", "high"),
+            ("gpt-5.4-nano-xhigh-fast", "gpt-5.4-nano", "xhigh"),
             ("gpt-5.3-codex-low-fast", "gpt-5.3-codex", "low"),
             ("gpt-5.3-codex-xhigh-fast", "gpt-5.3-codex", "xhigh"),
+            ("gpt-5.2-codex-xhigh-fast", "gpt-5.2-codex", "xhigh"),
+            ("gpt-5.1-codex-max-xhigh-fast", "gpt-5.1-codex-max", "xhigh"),
+            ("gpt-5.1-codex-mini-high-fast", "gpt-5.1-codex-mini", "high"),
             ("gpt-5.2-none-fast", "gpt-5.2", "none"),
+            ("gpt-5.5-pro-high-fast", "gpt-5.5-pro", "high"),
+            ("gpt-5.2-pro-medium-fast", "gpt-5.2-pro", "medium"),
+            ("gpt-5.4-pro-xhigh-fast", "gpt-5.4-pro", "xhigh"),
             ("gpt-5.1-none-fast", "gpt-5.1", "none"),
+            ("gpt-5-codex-high-fast", "gpt-5-codex", "high"),
+            ("gpt-5-pro-high-fast", "gpt-5-pro", "high"),
+            ("gpt-5.6-preview-xhigh-fast", "gpt-5.6-preview", "xhigh"),
             ("gpt-5-minimal-fast", "gpt-5", "minimal")
         ]
 
@@ -82,6 +92,11 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         let inputs = [
             #"{"model":"gpt-5.3-codex-none-fast","messages":[]}"#,
             #"{"model":"gpt-5.1-xhigh-fast","messages":[]}"#,
+            #"{"model":"gpt-5.1-codex-mini-xhigh-fast","messages":[]}"#,
+            #"{"model":"gpt-5.2-codex-none-fast","messages":[]}"#,
+            #"{"model":"gpt-5.5-pro-none-fast","messages":[]}"#,
+            #"{"model":"gpt-5.4-pro-none-fast","messages":[]}"#,
+            #"{"model":"gpt-5-pro-medium-fast","messages":[]}"#,
             #"{"model":"gpt-5.3-codex-spark-xhigh-fast","messages":[]}"#
         ]
 
@@ -97,7 +112,7 @@ final class CursorRelayAliasMapperTests: XCTestCase {
     }
 
     func testInjectAliasesAddsExtraVariants() {
-        let input = Data(#"{"object":"list","data":[{"id":"gpt-5.5","object":"model"},{"id":"gpt-5.4","object":"model"},{"id":"gpt-5.1","object":"model"},{"id":"gpt-5.3-codex","object":"model"},{"id":"gpt-5.3-codex-spark","object":"model"}]}"#.utf8)
+        let input = Data(#"{"object":"list","data":[{"id":"gpt-5.5","object":"model"},{"id":"gpt-5.5-pro","object":"model"},{"id":"gpt-5.4","object":"model"},{"id":"gpt-5.4-nano","object":"model"},{"id":"gpt-5.1","object":"model"},{"id":"gpt-5.1-codex-max","object":"model"},{"id":"gpt-5.1-codex-mini","object":"model"},{"id":"gpt-5.2-codex","object":"model"},{"id":"gpt-5.2-pro","object":"model"},{"id":"gpt-5.3-codex","object":"model"},{"id":"gpt-5.3-codex-spark","object":"model"},{"id":"gpt-5.6-preview","object":"model"}]}"#.utf8)
         let result = json(from: CursorRelayAliasMapper.injectAliases(intoModelsResponse: input))
         let ids = Set((result?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? [])
 
@@ -105,15 +120,26 @@ final class CursorRelayAliasMapperTests: XCTestCase {
         XCTAssertTrue(ids.contains("gpt-5.5-extra"))
         XCTAssertTrue(ids.contains("gpt-5.5-low-fast"))
         XCTAssertTrue(ids.contains("gpt-5.5-xhigh-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.5-pro-high-fast"))
         XCTAssertTrue(ids.contains("gpt-5.4-extra"))
         XCTAssertTrue(ids.contains("gpt-5.4-fast"))
         XCTAssertTrue(ids.contains("gpt-5.4-xhigh-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.4-nano-xhigh-fast"))
         XCTAssertTrue(ids.contains("gpt-5.1-none-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.1-codex-max-xhigh-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.1-codex-mini-high-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.2-codex-xhigh-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.2-pro-medium-fast"))
         XCTAssertTrue(ids.contains("gpt-5.3-codex-low-fast"))
         XCTAssertTrue(ids.contains("gpt-5.3-codex-xhigh-fast"))
         XCTAssertTrue(ids.contains("gpt-5.3-codex-spark-fast"))
+        XCTAssertTrue(ids.contains("gpt-5.6-preview-xhigh-fast"))
         XCTAssertFalse(ids.contains("gpt-5.1-xhigh-fast"), "alias should only be added when the model supports that effort")
         XCTAssertFalse(ids.contains("gpt-5.3-codex-none-fast"), "alias should only be added when the model supports that effort")
+        XCTAssertFalse(ids.contains("gpt-5.1-codex-mini-xhigh-fast"), "alias should only be added when the model supports that effort")
+        XCTAssertFalse(ids.contains("gpt-5.2-codex-none-fast"), "alias should only be added when the model supports that effort")
+        XCTAssertFalse(ids.contains("gpt-5.5-pro-none-fast"), "alias should only be added when the model supports that effort")
+        XCTAssertFalse(ids.contains("gpt-5.2-pro-none-fast"), "alias should only be added when the model supports that effort")
         XCTAssertFalse(ids.contains("gpt-5.3-codex-spark-xhigh-fast"), "spark only gets the fast suffix stripped")
         XCTAssertFalse(ids.contains("gpt-5.4-mini-extra"), "alias should only be added when its base model exists")
     }

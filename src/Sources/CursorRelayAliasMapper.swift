@@ -6,17 +6,15 @@ import Foundation
 /// "-xhigh-fast" variants. The relay rewrites them to the real upstream model
 /// and adds the matching reasoning effort before forwarding.
 struct CursorRelayAliasMapper {
-    private static let modelEfforts: [String: [String]] = [
-        "gpt-5.5": ["none", "low", "medium", "high", "xhigh"],
-        "gpt-5.4": ["none", "low", "medium", "high", "xhigh"],
-        "gpt-5.4-mini": ["none", "low", "medium", "high", "xhigh"],
-        "gpt-5.3-codex": ["low", "medium", "high", "xhigh"],
-        "gpt-5.2": ["none", "low", "medium", "high", "xhigh"],
-        "gpt-5.1": ["none", "low", "medium", "high"],
-        "gpt-5": ["minimal", "low", "medium", "high"]
-    ]
-    private static let fastOnlyModels = ["gpt-5.3-codex-spark"]
-    private static let aliases = makeAliases()
+    private typealias AliasTarget = (upstreamModel: String, reasoningEffort: String?)
+
+    private static let modernEfforts = ["none", "low", "medium", "high", "xhigh"]
+    private static let codexEfforts = ["low", "medium", "high", "xhigh"]
+    private static let olderCodexEfforts = ["low", "medium", "high"]
+    private static let proEfforts = ["medium", "high", "xhigh"]
+    private static let highOnlyEfforts = ["high"]
+    private static let legacyEfforts = ["minimal", "low", "medium", "high"]
+    private static let knownEfforts = ["none", "minimal", "low", "medium", "high", "xhigh"]
 
     /// Rewrites a chat-completions request body if it targets an alias model.
     /// Alias requests get the requested `reasoning_effort` injected.
@@ -24,7 +22,7 @@ struct CursorRelayAliasMapper {
         guard !body.isEmpty,
               var json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let model = json["model"] as? String,
-              let target = aliases[model] else {
+              let target = aliasTarget(for: model) else {
             return body
         }
 
@@ -49,33 +47,103 @@ struct CursorRelayAliasMapper {
         }
 
         let existingIDs = Set(models.compactMap { $0["id"] as? String })
-        for (alias, target) in aliases where existingIDs.contains(target.upstreamModel) && !existingIDs.contains(alias) {
-            guard var source = models.first(where: { ($0["id"] as? String) == target.upstreamModel }) else { continue }
-            source["id"] = alias
-            models.append(source)
+        for model in existingIDs where shouldAdvertiseAliases(for: model) {
+            for alias in aliases(for: model) where !existingIDs.contains(alias) {
+                guard var source = models.first(where: { ($0["id"] as? String) == model }) else { continue }
+                source["id"] = alias
+                models.append(source)
+            }
         }
 
         json["data"] = models
         return (try? JSONSerialization.data(withJSONObject: json)) ?? data
     }
 
-    private static func makeAliases() -> [String: (upstreamModel: String, reasoningEffort: String?)] {
-        var aliases: [String: (upstreamModel: String, reasoningEffort: String?)] = [:]
-
-        for (model, efforts) in modelEfforts {
-            aliases["\(model)-fast"] = (model, nil)
-            for effort in efforts {
-                aliases["\(model)-\(effort)-fast"] = (model, effort)
-            }
-            if efforts.contains("xhigh") {
-                aliases["\(model)-extra"] = (model, "xhigh")
-            }
+    private static func aliasTarget(for model: String) -> AliasTarget? {
+        if model.hasSuffix("-extra") {
+            var baseModel = model
+            baseModel.removeLast("-extra".count)
+            guard supportedEfforts(for: baseModel).contains("xhigh") else { return nil }
+            return (baseModel, "xhigh")
         }
 
-        for model in fastOnlyModels {
-            aliases["\(model)-fast"] = (model, nil)
+        guard model.hasSuffix("-fast") else { return nil }
+
+        var withoutFast = model
+        withoutFast.removeLast("-fast".count)
+
+        if let effortAlias = parseEffortAlias(withoutFast) {
+            guard supportedEfforts(for: effortAlias.baseModel).contains(effortAlias.effort) else { return nil }
+            return (effortAlias.baseModel, effortAlias.effort)
         }
 
+        return isGPT5Model(withoutFast) ? (withoutFast, nil) : nil
+    }
+
+    private static func aliases(for model: String) -> [String] {
+        var aliases = ["\(model)-fast"]
+        let efforts = supportedEfforts(for: model)
+        aliases += efforts.map { "\(model)-\($0)-fast" }
+        if efforts.contains("xhigh") {
+            aliases.append("\(model)-extra")
+        }
         return aliases
+    }
+
+    private static func parseEffortAlias(_ model: String) -> (baseModel: String, effort: String)? {
+        for effort in knownEfforts {
+            let suffix = "-\(effort)"
+            guard model.hasSuffix(suffix) else { continue }
+            var baseModel = model
+            baseModel.removeLast(suffix.count)
+            guard isGPT5Model(baseModel) else { return nil }
+            return (baseModel, effort)
+        }
+        return nil
+    }
+
+    private static func supportedEfforts(for model: String) -> [String] {
+        if model.contains("-spark") {
+            return []
+        }
+        if model.hasPrefix("gpt-5.5-pro") || model.hasPrefix("gpt-5.4-pro") || model.hasPrefix("gpt-5.2-pro") {
+            return proEfforts
+        }
+        if model.hasPrefix("gpt-5-pro") {
+            return highOnlyEfforts
+        }
+        if model.hasPrefix("gpt-5.3-codex") {
+            return codexEfforts
+        }
+        if model.hasPrefix("gpt-5.2-codex") {
+            return codexEfforts
+        }
+        if model.hasPrefix("gpt-5.1-codex-max") {
+            return codexEfforts
+        }
+        if model.hasPrefix("gpt-5.1-codex") {
+            return olderCodexEfforts
+        }
+        if model.hasPrefix("gpt-5-codex") {
+            return olderCodexEfforts
+        }
+        if model.hasPrefix("gpt-5.1") {
+            return ["none", "low", "medium", "high"]
+        }
+        if model == "gpt-5" || model.hasPrefix("gpt-5-") {
+            return legacyEfforts
+        }
+        if model.hasPrefix("gpt-5.") {
+            return modernEfforts
+        }
+        return []
+    }
+
+    private static func shouldAdvertiseAliases(for model: String) -> Bool {
+        isGPT5Model(model) && !model.hasSuffix("-fast") && !model.hasSuffix("-extra")
+    }
+
+    private static func isGPT5Model(_ model: String) -> Bool {
+        model == "gpt-5" || model.hasPrefix("gpt-5.") || model.hasPrefix("gpt-5-")
     }
 }
